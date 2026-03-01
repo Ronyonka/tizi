@@ -29,7 +29,12 @@ export async function POST(request: Request) {
     }
 
     const id = `ex_${Date.now()}`;
-    const exercise = { id, name: name.trim(), muscle_group: muscle_group.trim() };
+    const exercise = {
+      id,
+      name: name.trim(),
+      muscle_group: muscle_group.trim(),
+      name_lowercase: name.trim().toLowerCase(),
+    };
     await appendExercise(exercise);
     return Response.json(exercise, { status: 201 });
   } catch (error) {

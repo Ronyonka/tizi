@@ -31,12 +31,12 @@ Tizi uses Firestore for persistence. While the SDK is capable of direct client-s
 
 ## Collections
 
-| Collection | Purpose |
-|---|---|
-| `exercises` | Exercise library (name, muscle group) |
-| `routines` | Workout routines (name, day of week) |
-| `routine_exercises` | Which exercises belong to which routine (sets, reps) |
-| `logs` | Workout session history (date, exercise, sets, reps, weight) |
+| Collection | Purpose | Schema Details |
+|---|---|---|
+| `exercises` | Exercise library | `{ id, name, muscle_group, name_lowercase }` |
+| `routines` | Workout routines | `{ id, name, day_of_week, name_lowercase, day_of_week_lowercase }` |
+| `routine_exercises` | Exercise links | `{ routine_id, exercise_id, sets, reps }` |
+| `logs` | Session history | `{ id, date, routine_id, exercise_id, sets, reps, weight_kg }` |
 
 ---
 
@@ -103,9 +103,10 @@ service cloud.firestore {
 ## File Reference
 
 ### `services/firebase.ts`
-- Calls `initializeApp()` once (guarded by `getApps()` to survive Expo hot-reload)
-- Exports `db` — the Firestore instance used throughout the app
-- Exports `default app` — the Firebase app instance
+- Calls `initializeApp()` once (guarded by `getApps()` to survive Expo hot-reload).
+- Configures `localCache: memoryLocalCache()` to ensure stable connectivity in the Node.js API Route environment (avoiding browser-only IndexedDB errors).
+- Exports `db` — the Firestore instance.
+- Exports `default app` — the Firebase app instance.
 
 ### `config/firebase.ts`
 - Exports `COLLECTIONS` — an object of collection name constants to avoid magic strings
@@ -117,11 +118,16 @@ The primary data-access layer. Drop-in replacement for `services/googleSheets.ts
 | Function group | Functions |
 |---|---|
 | **Read** | `getExercises()`, `getRoutines()`, `getRoutineExercises()`, `getLogs()` |
+| **Lookup** | `findExerciseByName(name)`, `findRoutineByNameAndDay(name, day)`, `getRoutineExercise(routineId, exId)` |
 | **Exercises** | `appendExercise(exercise)` |
 | **Routines** | `appendRoutine(routine)`, `updateRoutine(id, fields)`, `deleteRoutine(id)`, `deleteAllRoutineExercisesForRoutine(routineId)` |
 | **Routine Exercises** | `appendRoutineExercise(re)`, `updateRoutineExercise(routineId, exerciseId, sets, reps)`, `deleteRoutineExercise(routineId, exerciseId)` |
 | **Logs** | `appendLog(log)`, `batchAppendLogs(logs)` |
 | **Utility** | `testConnection()` |
+
+**Normalization**
+- Exercises and Routines include `_lowercase` fields to support case-insensitive Firestore queries without fetching entire collections.
+- `appendExercise` and `appendRoutine` automatically handle this normalization.
 
 **Document ID conventions**
 
@@ -133,6 +139,20 @@ The primary data-access layer. Drop-in replacement for `services/googleSheets.ts
 | `logs` | `log_<timestamp>` |
 
 > `batchAppendLogs` splits writes into 500-document chunks to stay within Firestore's batch limit.
+
+---
+
+## CSV Upload Deduplication
+
+The `POST /api/csv-upload` route implements targeted deduplication against Firestore:
+
+1. **Exercises**: Matched by `name` (case-insensitive) via `findExerciseByName`.
+2. **Routines**: Matched by `name` + `day_of_week` (case-insensitive) via `findRoutineByNameAndDay`.
+3. **Routine_Exercises**: Matched by `routine_id` + `exercise_id` (document ID lookups).
+
+**Performance Features:**
+- **Request-level Caching**: Local caches (`exerciseCache`, `routineCache`) avoid redundant Firestore lookups for repeated items in the same CSV.
+- **Batch Writing**: All new records are committed in a single, atomic `writeBatch`.
 
 ---
 

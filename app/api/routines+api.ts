@@ -29,7 +29,13 @@ export async function POST(request: Request) {
     }
 
     const id = `routine_${Date.now()}`;
-    const routine = { id, name: name.trim(), day_of_week: day_of_week.trim() };
+    const routine = {
+      id,
+      name: name.trim(),
+      day_of_week: day_of_week.trim(),
+      name_lowercase: name.trim().toLowerCase(),
+      day_of_week_lowercase: day_of_week.trim().toLowerCase(),
+    };
     await appendRoutine(routine);
     return Response.json(routine, { status: 201 });
   } catch (error) {

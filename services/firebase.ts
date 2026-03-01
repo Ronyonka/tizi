@@ -1,5 +1,5 @@
 import { getApps, initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, memoryLocalCache } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -13,5 +13,13 @@ const firebaseConfig = {
 // Prevent re-initialising when hot-reloading in Expo Go
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-export const db = getFirestore(app);
+/**
+ * For Expo API Routes (Node.js), we use memoryLocalCache to avoid browser-only 
+ * persistence issues. For complex server-side logic in production, consider 
+ * migrating to `firebase-admin` for privileged and more stable connectivity.
+ */
+export const db = initializeFirestore(app, {
+  localCache: memoryLocalCache(),
+});
+
 export default app;

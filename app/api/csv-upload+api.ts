@@ -8,13 +8,14 @@
  * to the exercises, routines, and routine_exercises Firestore collections.
  */
 
+import { doc } from 'firebase/firestore';
+
+import { COLLECTIONS } from '@/config/firebase';
+import { db } from '@/services/firebase';
 import {
-    appendExercise,
-    appendRoutine,
-    appendRoutineExercise,
-    getExercises,
-    getRoutineExercises,
-    getRoutines,
+    findExerciseByName,
+    findRoutineByNameAndDay,
+    getRoutineExercise
 } from '@/services/firestore';
 
 interface CsvRow {
@@ -85,21 +86,10 @@ export async function POST(request: Request) {
       return Response.json({ error: 'No valid rows found in CSV' }, { status: 400 });
     }
 
-    // Fetch existing data to deduplicate
-    const [existingExercises, existingRoutines, existingRoutineExercises] = await Promise.all([
-      getExercises(),
-      getRoutines(),
-      getRoutineExercises(),
-    ]);
-
-    // Build lookup maps (by normalised name)
-    const exerciseMap = new Map(existingExercises.map((e) => [e.name.toLowerCase(), e]));
-    const routineMap = new Map(
-      existingRoutines.map((r) => [`${r.name.toLowerCase()}::${r.day_of_week.toLowerCase()}`, r])
-    );
-    const reSet = new Set(
-      existingRoutineExercises.map((re) => `${re.routine_id}::${re.exercise_id}`)
-    );
+    // Local caches for the duration of this request to minimize Firestore queries
+    const exerciseCache = new Map<string, { id: string; name: string; muscle_group: string }>();
+    const routineCache = new Map<string, { id: string; name: string; day_of_week: string }>();
+    const reSet = new Set<string>();
 
     const newExercises: { id: string; name: string; muscle_group: string }[] = [];
     const newRoutines: { id: string; name: string; day_of_week: string }[] = [];
@@ -109,42 +99,95 @@ export async function POST(request: Request) {
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
+      console.log(`[CSV] Processing row ${i + 1}/${rows.length}: ${row.exercise_name} in ${row.routine_name}`);
       const exKey = row.exercise_name.toLowerCase();
       const rtKey = `${row.routine_name.toLowerCase()}::${row.day_of_week.toLowerCase()}`;
 
-      // Upsert Exercise
-      if (!exerciseMap.has(exKey)) {
-        const id = `ex_${ts}_${i}`;
-        const ex = { id, name: row.exercise_name, muscle_group: row.muscle_group };
-        exerciseMap.set(exKey, ex);
-        newExercises.push(ex);
+      // 1. Resolve Exercise
+      let exercise = exerciseCache.get(exKey);
+      if (!exercise) {
+        console.log(`[CSV] Finding exercise: ${row.exercise_name}`);
+        const existing = await findExerciseByName(row.exercise_name);
+        if (existing) {
+          console.log(`[CSV] Found existing exercise: ${existing.id}`);
+          exercise = existing;
+        } else {
+          console.log(`[CSV] Creating new exercise: ${row.exercise_name}`);
+          const id = `ex_${ts}_${i}`;
+          exercise = { id, name: row.exercise_name, muscle_group: row.muscle_group };
+          newExercises.push(exercise);
+        }
+        exerciseCache.set(exKey, exercise);
       }
 
-      // Upsert Routine
-      if (!routineMap.has(rtKey)) {
-        const id = `routine_${ts}_${i}`;
-        const rt = { id, name: row.routine_name, day_of_week: row.day_of_week };
-        routineMap.set(rtKey, rt);
-        newRoutines.push(rt);
+      // 2. Resolve Routine
+      let routine = routineCache.get(rtKey);
+      if (!routine) {
+        console.log(`[CSV] Finding routine: ${row.routine_name} on ${row.day_of_week}`);
+        const existing = await findRoutineByNameAndDay(row.routine_name, row.day_of_week);
+        if (existing) {
+          console.log(`[CSV] Found existing routine: ${existing.id}`);
+          routine = existing;
+        } else {
+          console.log(`[CSV] Creating new routine: ${row.routine_name}`);
+          const id = `routine_${ts}_${i}`;
+          routine = { id, name: row.routine_name, day_of_week: row.day_of_week };
+          newRoutines.push(routine);
+        }
+        routineCache.set(rtKey, routine);
       }
 
-      // Upsert Routine_Exercise
-      const exerciseId = exerciseMap.get(exKey)!.id;
-      const routineId = routineMap.get(rtKey)!.id;
+      // 3. Resolve Routine_Exercise link
+      const exerciseId = exercise!.id;
+      const routineId = routine!.id;
       const reKey = `${routineId}::${exerciseId}`;
 
       if (!reSet.has(reKey)) {
+        console.log(`[CSV] Finding link: ${routineId} <-> ${exerciseId}`);
+        const existingIdx = await getRoutineExercise(routineId, exerciseId);
+        if (!existingIdx) {
+          console.log(`[CSV] Creating new link`);
+          newRoutineExercises.push({
+            routine_id: routineId,
+            exercise_id: exerciseId,
+            sets: row.sets,
+            reps: row.reps,
+          });
+        } else {
+          console.log(`[CSV] Link exists`);
+        }
         reSet.add(reKey);
-        newRoutineExercises.push({ routine_id: routineId, exercise_id: exerciseId, sets: row.sets, reps: row.reps });
       }
     }
+    console.log(`[CSV] Deduplication complete. Writing ${newExercises.length} ex, ${newRoutines.length} rt, ${newRoutineExercises.length} links.`);
 
-    // Write all new documents to Firestore
-    await Promise.all([
-      ...newExercises.map((ex) => appendExercise(ex)),
-      ...newRoutines.map((rt) => appendRoutine(rt)),
-      ...newRoutineExercises.map((re) => appendRoutineExercise(re)),
-    ]);
+    // Write all new documents to Firestore using a single batch
+    const { writeBatch } = await import('firebase/firestore');
+    const batch = writeBatch(db);
+
+    newExercises.forEach((ex) => {
+      const id = ex.id;
+      const ref = doc(db, COLLECTIONS.exercises, id);
+      batch.set(ref, { ...ex, name_lowercase: ex.name.toLowerCase() });
+    });
+
+    newRoutines.forEach((rt) => {
+      const id = rt.id;
+      const ref = doc(db, COLLECTIONS.routines, id);
+      batch.set(ref, { 
+        ...rt, 
+        name_lowercase: rt.name.toLowerCase(), 
+        day_of_week_lowercase: rt.day_of_week.toLowerCase() 
+      });
+    });
+
+    newRoutineExercises.forEach((re) => {
+      const docId = `${re.routine_id}_${re.exercise_id}`;
+      const ref = doc(db, COLLECTIONS.routineExercises, docId);
+      batch.set(ref, re);
+    });
+
+    await batch.commit();
 
     return Response.json({
       success: true,
@@ -157,6 +200,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error(`[CSV] Error during upload:`, error);
     return Response.json({ error: message }, { status: 500 });
   }
 }

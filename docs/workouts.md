@@ -46,6 +46,7 @@ A shared library of exercises. An exercise can appear in many routines.
 | `id` | string | ✅ `ex_<timestamp>` | Primary key |
 | `name` | string | — | e.g. `Bench Press` |
 | `muscle_group` | string | — | e.g. `Chest` |
+| `name_lowercase` | string | ✅ | For case-insensitive lookup |
 
 Supported muscle groups: `Chest`, `Back`, `Shoulders`, `Biceps`, `Triceps`, `Legs`, `Quads`, `Hamstrings`, `Glutes`, `Calves`, `Core`, `Abs`, `Cardio`, `Full Body`, `Other`.
 
@@ -58,6 +59,8 @@ One row per routine. Routines are assigned to a day of the week.
 | `id` | string | ✅ `routine_<timestamp>` | Primary key |
 | `name` | string | — | e.g. `Push Day A` |
 | `day_of_week` | string | — | `Monday` … `Sunday` |
+| `name_lowercase` | string | ✅ | For case-insensitive lookup |
+| `day_of_week_lowercase` | string | ✅ | For case-insensitive lookup |
 
 ### `Routine_Exercises`
 
@@ -355,7 +358,7 @@ See [CSV Bulk Import](#csv-bulk-import) for full details.
 2. `expo-document-picker` opens the native file picker — select a `.csv` file
 3. `expo-file-system` reads the file content as a string
 4. The CSV text is `POST`-ed to `/api/csv-upload` as `{ "csv": "..." }`
-5. The server parses the CSV, fetches existing data from Firestore to deduplicate, then appends only new documents
+5. The server parses the CSV, performs targeted Firestore lookups for each row to deduplicate, then commits all new records in a single `writeBatch`.
 6. A summary Alert is shown: rows parsed / new routines / new exercises / new links
 7. The screen refreshes from Firestore
 
@@ -426,6 +429,14 @@ The functions below live in `services/firestore.ts` and are called from the API 
 | `getExercises()` | `Exercise[]` | All documents from `exercises` collection |
 | `getRoutines()` | `Routine[]` | All documents from `routines` collection |
 | `getRoutineExercises()` | `RoutineExercise[]` | All documents from `routine_exercises` collection |
+
+### Lookup functions
+
+| Function | Returns | Description |
+|---|---|---|
+| `findExerciseByName(name)` | `Exercise \| null` | Case-insensitive lookup using `name_lowercase` |
+| `findRoutineByNameAndDay(name, day)` | `Routine \| null` | Case-insensitive lookup using `_lowercase` fields |
+| `getRoutineExercise(rtId, exId)` | `RE \| null` | Lookup using composite ID: `${rtId}_${exId}` |
 
 ### Write functions — Routines
 

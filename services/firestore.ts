@@ -24,11 +24,13 @@ import {
     setDoc,
     updateDoc,
     where,
-    writeBatch,
+    writeBatch
 } from 'firebase/firestore';
 
 import { COLLECTIONS } from '@/config/firebase';
 import { db } from '@/services/firebase';
+
+console.log('[Firestore] Initialized with Project ID:', process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
 
 // ─── TypeScript interfaces (identical to googleSheets.ts) ──────────────────
 
@@ -36,12 +38,15 @@ export interface Exercise {
   id: string;
   name: string;
   muscle_group: string;
+  name_lowercase?: string; // For case-insensitive lookup
 }
 
 export interface Routine {
   id: string;
   name: string;
   day_of_week: string;
+  name_lowercase?: string;        // For case-insensitive lookup
+  day_of_week_lowercase?: string; // For case-insensitive lookup
 }
 
 export interface RoutineExercise {
@@ -102,18 +107,71 @@ export async function getLogs(): Promise<Log[]> {
   });
 }
 
+// ─── LOOKUP ───────────────────────────────────────────────────────────────
+
+export async function findExerciseByName(name: string): Promise<Exercise | null> {
+  const q = query(
+    collection(db, COLLECTIONS.exercises),
+    where('name_lowercase', '==', name.toLowerCase()),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return snap.docs[0].data() as Exercise;
+}
+
+export async function findRoutineByNameAndDay(name: string, day: string): Promise<Routine | null> {
+  const q = query(
+    collection(db, COLLECTIONS.routines),
+    where('name_lowercase', '==', name.toLowerCase()),
+    where('day_of_week_lowercase', '==', day.toLowerCase()),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return snap.docs[0].data() as Routine;
+}
+
+export async function getRoutineExercise(routineId: string, exercise_id: string): Promise<RoutineExercise | null> {
+  try {
+    const q = query(
+      collection(db, COLLECTIONS.routineExercises),
+      where('routine_id', '==', routineId),
+      where('exercise_id', '==', exercise_id),
+      limit(1)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+    return snap.docs[0].data() as RoutineExercise;
+  } catch (error) {
+    console.error(`[Firestore] getRoutineExercise error:`, error);
+    throw error;
+  }
+}
+
 // ─── WRITE — Exercises ─────────────────────────────────────────────────────
 
 export async function appendExercise(exercise: Exercise): Promise<void> {
   const id = exercise.id || `ex_${Date.now()}`;
-  await setDoc(doc(db, COLLECTIONS.exercises, id), { ...exercise, id });
+  const data = {
+    ...exercise,
+    id,
+    name_lowercase: exercise.name.toLowerCase(),
+  };
+  await setDoc(doc(db, COLLECTIONS.exercises, id), data);
 }
 
 // ─── WRITE — Routines ──────────────────────────────────────────────────────
 
 export async function appendRoutine(routine: Routine): Promise<void> {
   const id = routine.id || `routine_${Date.now()}`;
-  await setDoc(doc(db, COLLECTIONS.routines, id), { ...routine, id });
+  const data = {
+    ...routine,
+    id,
+    name_lowercase: routine.name.toLowerCase(),
+    day_of_week_lowercase: routine.day_of_week.toLowerCase(),
+  };
+  await setDoc(doc(db, COLLECTIONS.routines, id), data);
 }
 
 export async function updateRoutine(
