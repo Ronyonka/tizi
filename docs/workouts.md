@@ -10,10 +10,9 @@ Deep-dive documentation for the Workouts screen in Tizi — covering the data mo
 2. [Data Model](#data-model)
 3. [Architecture & Data Flow](#architecture--data-flow)
 4. [UI Reference](#ui-reference)
-5. [API Routes](#api-routes)
-6. [CSV Bulk Import](#csv-bulk-import)
-7. [Service Layer Reference](#service-layer-reference)
-8. [Error Handling](#error-handling)
+5. [CSV Bulk Import](#csv-bulk-import)
+6. [Service Layer Reference](#service-layer-reference)
+7. [Error Handling](#error-handling)
 
 ---
 
@@ -82,30 +81,21 @@ Junction table. One row per exercise-in-a-routine, storing the default set/rep p
 ```
 workouts.tsx / progress.tsx  (React Native — client)
     │
-    │  onSnapshot / fetch (Realtime Read)
+    │  onSnapshot (Realtime Read)
+    │  updateRoutine, appendExercise (Mutation)
     ▼
 Cloud Firestore
     ▲
-    │  HTTP mutation (relative URL)
-    ▼
-Expo API Routes  (Node.js — server-side)
-    ├── /api/routines             (POST, PATCH, DELETE)
-    ├── /api/exercises            (POST)
-    ├── /api/routine-exercises    (POST, PATCH, DELETE)
-    ├── /api/csv-upload           (POST)
-    └── /api/logs/[id]            (DELETE)
     │
-    │  Firestore REST API (fetch)
-    ▼
-services/firestore-rest.ts
+services/firestore.ts
 ```
 
 ### Data Flow Pattern
 
-Tizi implements a **hybrid data flow**:
-- **Realtime Reads**: The frontend uses the **Firebase JS SDK** (`onSnapshot`) for live updates on the Home and Workouts screens. 
-- **Reliable Writes**: All database mutations are handled by **API Routes** which call the **Firestore REST API**. This bypasses potential GRPC/Long-polling hangs in the server environment, ensuring that writes are fast and stateless.
-- **Auto-Sync**: When an API route completes a write, the Firestore document changes, which automatically triggers the client-side `onSnapshot` listeners to refresh the UI.
+Tizi utilizes a strictly **client-first** sync framework:
+- **Instant Synchronization**: Every device connecting to the DB is synchronized in real-time through the **Firebase JS SDK** (`onSnapshot`).
+- **Direct Writes**: Mutations are forwarded to Firestore through directly imported functions residing inside `services/firestore.ts`.
+- **Auto-Sync Loop**: Whenever `appendRoutine` or similar methods complete execution, the resulting delta is automatically propagated by Firestore down to any mounted UI listener, allowing components to rely completely on `onSnapshot` without manual `setState()` injections.
 
 ---
 
@@ -180,190 +170,6 @@ Each muscle group has a unique colour used for pill badges throughout the UI:
 
 ---
 
-## API Routes
-
-All routes are defined as Expo API Route files (`+api.ts`) and run server-side.
-
-### `GET /api/routines`
-
-Returns all routines from the `routines` collection.
-
-**Response** `200`
-```json
-[
-  { "id": "routine_1234", "name": "Push Day A", "day_of_week": "Monday" }
-]
-```
-
----
-
-### `POST /api/routines`
-
-Creates a new routine and appends it to the `routines` collection.
-
-**Body**
-```json
-{ "name": "Push Day A", "day_of_week": "Monday" }
-```
-
-**Response** `201`
-```json
-{ "id": "routine_1234", "name": "Push Day A", "day_of_week": "Monday" }
-```
-
----
-
-### `PATCH /api/routines/:id`
-
-Updates an existing routine's name and/or day.
-
-**Body** (all fields optional)
-```json
-{ "name": "Push Day B", "day_of_week": "Thursday" }
-```
-
-**Response** `200`
-```json
-{ "success": true, "id": "routine_1234" }
-```
-
----
-
-### `DELETE /api/routines/:id`
-
-Deletes a routine **and all its `Routine_Exercises` rows** (cascade delete).
-
-**Response** `200`
-```json
-{ "success": true }
-```
-
----
-
-### `GET /api/exercises`
-
-Returns all exercises from the `exercises` collection.
-
-**Response** `200`
-```json
-[
-  { "id": "ex_5678", "name": "Bench Press", "muscle_group": "Chest" }
-]
-```
-
-**Query params**
-- *(none — returns all exercises)*
-
----
-
-### `POST /api/exercises`
-
-Creates a new exercise.
-
-**Body**
-```json
-{ "name": "Bench Press", "muscle_group": "Chest" }
-```
-
-**Response** `201`
-```json
-{ "id": "ex_5678", "name": "Bench Press", "muscle_group": "Chest" }
-```
-
----
-
-### `GET /api/routine-exercises`
-
-Returns routine-exercise links. Optionally filter by routine.
-
-**Query params**
-- `?routineId=routine_1234` — only return links for that routine
-
-**Response** `200`
-```json
-[
-  { "routine_id": "routine_1234", "exercise_id": "ex_5678", "sets": 4, "reps": 8 }
-]
-```
-
----
-
-### `POST /api/routine-exercises`
-
-Links an exercise to a routine with a set/rep prescription.
-
-**Body**
-```json
-{ "routine_id": "routine_1234", "exercise_id": "ex_5678", "sets": 4, "reps": 8 }
-```
-
-**Response** `201` — the same object.
-
----
-
-### `PATCH /api/routine-exercises`
-
-Updates the sets/reps for an existing link (looked up by `routine_id` + `exercise_id`).
-
-**Body**
-```json
-{ "routine_id": "routine_1234", "exercise_id": "ex_5678", "sets": 5, "reps": 6 }
-```
-
-**Response** `200` — the same object.
-
----
-
-### `DELETE /api/routine-exercises`
-
-Removes a single exercise from a routine.
-
-**Body**
-```json
-{ "routine_id": "routine_1234", "exercise_id": "ex_5678" }
-```
-
-**Response** `200`
-```json
-{ "success": true }
-```
-
----
-
-### `POST /api/logs`
-
-Creates or updates multiple workout logs for a session.
-
-**Body**
-```json
-{ 
-  "logs": [
-    { "date": "...", "exercise_id": "...", "sets": "1", "reps": "10", "weight_kg": 50 },
-    ...
-  ]
-}
-```
-
-**Response** `201`
-```json
-{ "success": true, "count": 5 }
-```
-
----
-
-### `DELETE /api/logs/:id`
-
-Deletes a single workout log entry.
-
-**Response** `200`
-```json
-{ "success": true, "id": "log_1234" }
-```
-
----
-
-### `POST /api/csv-upload`
-
 ## CSV Bulk Import
 
 ### How it works
@@ -371,10 +177,10 @@ Deletes a single workout log entry.
 1. User taps the cloud-upload icon in the Workouts screen header
 2. `expo-document-picker` opens the native file picker — select a `.csv` file
 3. `expo-file-system` reads the file content as a string
-4. The CSV text is `POST`-ed to `/api/csv-upload` as `{ "csv": "..." }`
-5. The server parses the CSV, performs targeted Firestore lookups for each row to deduplicate, then commits all new records in a single `writeBatch`.
-6. A summary Alert is shown: rows parsed / new routines / new exercises / new links
-7. The screen refreshes from Firestore
+4. The CSV text is automatically parsed line-by-line within the `handleCSVUpload` closure.
+5. Code conducts targeted Firestore lookups (e.g. `findExerciseByName`) to properly deduplicate the existing records.
+6. A summary Alert is shown: rows parsed / new routines / new exercises / new links.
+7. Handled records instantly fire across the `onSnapshot` wire to rerender the list.
 
 ### Deduplication logic
 
@@ -410,18 +216,13 @@ Leg Day,Wednesday,Romanian Deadlift,Hamstrings,3,10
 Leg Day,Wednesday,Leg Press,Quads,3,12
 ```
 
-**API response:**
+**Alert popup on completion:**
 
-```json
-{
-  "success": true,
-  "summary": {
-    "rows_parsed": 9,
-    "exercises_added": 9,
-    "routines_added": 3,
-    "routine_exercises_added": 9
-  }
-}
+```
+Parsed 9 rows
+• 3 new routines
+• 9 new exercises
+• 9 new exercise links
 ```
 
 ### Notes
@@ -434,7 +235,7 @@ Leg Day,Wednesday,Leg Press,Quads,3,12
 
 ## Service Layer Reference
 
-The functions below live in `services/firestore-rest.ts` and are called from the API routes. They provide a REST-based alternative to the SDK for reliable server-side writes.
+The functions below live in `services/firestore.ts` and encompass the core data layer for the app.
 
 ### Read functions
 
@@ -478,23 +279,13 @@ On load failure an error banner is shown at the top of the screen with a **Retry
 
 ### Mutation errors
 
-Each create/update/delete action wraps the API call in a `try/catch` and shows an `Alert` on failure. The local state is *not* rolled back — the optimistic update stands and the user can tap the refresh button to re-sync if needed.
-
-### API route errors
-
-All API routes return a consistent error shape:
-
-```json
-{ "error": "human-readable message here" }
-```
-
-With the appropriate HTTP status code (`400` for validation, `500` for service errors).
+Each create/update/delete action wraps the SDK call in a `try/catch` and shows an `Alert` on failure. The local state relies completely on the backend snapshot stream, meaning there's absolutely zero desync risk between failures.
 
 ### Common issues
 
-| Symptom | Likely cause | Fix |
+| Diagnosis | Likely cause | Fix |
 |---|---|---|
 | Screen shows "Failed to load data" | Firestore Permission Error | Verify your Security Rules in Firebase Console |
 | Snapshot listener error in logs | Missing Firestore rules | Apply the "Development Rules" in `docs/firebase.md` |
-| "Failed to load" on Home/Workouts | Connection issue | Check `curl localhost:8081/api/test-sheets` |
+| "Failed to load" on Home | Connection issue | Try hitting "Test Connection" on the Settings Screen |
 | Notifications crashing on Android | Expo Go restriction | Tizi uses defensive guards; check `services/notifications.ts` |
