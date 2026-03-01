@@ -1,98 +1,234 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
+
+const GREETING = 'Good morning';
+const USERNAME = 'Ron';
+
+const QUICK_STATS = [
+  { label: 'Streak', value: '12', unit: 'days' },
+  { label: 'Volume', value: '4.2', unit: 'k kg' },
+  { label: 'PRs', value: '3', unit: 'this week' },
+];
+
+const UPCOMING = [
+  { day: 'Today', name: 'Push Day A', tags: ['Chest', 'Shoulders', 'Triceps'] },
+  { day: 'Tomorrow', name: 'Rest / Active Recovery', tags: ['Mobility', 'Stretch'] },
+  { day: 'Wed', name: 'Pull Day A', tags: ['Back', 'Biceps'] },
+];
 
 export default function HomeScreen() {
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.greeting}>{GREETING},</Text>
+            <Text style={styles.username}>{USERNAME} 👊</Text>
+          </View>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>R</Text>
+          </View>
+        </View>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+        {/* Today's Banner */}
+        <View style={styles.banner}>
+          <Text style={styles.bannerLabel}>TODAY'S WORKOUT</Text>
+          <Text style={styles.bannerTitle}>Push Day A</Text>
+          <Text style={styles.bannerSub}>Chest · Shoulders · Triceps</Text>
+          <View style={styles.startBtn}>
+            <Text style={styles.startBtnText}>Start Workout →</Text>
+          </View>
+        </View>
+
+        {/* Quick Stats */}
+        <View style={styles.statsRow}>
+          {QUICK_STATS.map((s) => (
+            <View key={s.label} style={styles.statCard}>
+              <Text style={styles.statValue}>{s.value}</Text>
+              <Text style={styles.statUnit}>{s.unit}</Text>
+              <Text style={styles.statLabel}>{s.label}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Upcoming */}
+        <Text style={styles.sectionTitle}>UPCOMING</Text>
+        {UPCOMING.map((item) => (
+          <View key={item.day} style={styles.scheduleCard}>
+            <Text style={styles.scheduleDay}>{item.day}</Text>
+            <View style={styles.scheduleInfo}>
+              <Text style={styles.scheduleName}>{item.name}</Text>
+              <View style={styles.tagRow}>
+                {item.tags.map((t) => (
+                  <View key={t} style={styles.tag}>
+                    <Text style={styles.tagText}>{t}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </View>
+        ))}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
+  safe: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1 },
+  content: { padding: Spacing.md, paddingBottom: Spacing.xxl },
+
+  header: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
+    marginBottom: Spacing.lg,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  greeting: {
+    fontSize: Typography.md,
+    color: Colors.textSecondary,
+    fontWeight: Typography.medium,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  username: {
+    fontSize: Typography.xxl,
+    color: Colors.text,
+    fontWeight: Typography.black,
+    letterSpacing: Typography.tight,
+  },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: Radii.full,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontSize: Typography.lg,
+    fontWeight: Typography.bold,
+    color: Colors.background,
+  },
+
+  banner: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.lg,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.primary,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  bannerLabel: {
+    fontSize: Typography.xs,
+    color: Colors.primary,
+    fontWeight: Typography.bold,
+    letterSpacing: Typography.wider,
+    marginBottom: Spacing.xs,
+  },
+  bannerTitle: {
+    fontSize: Typography.xxl,
+    color: Colors.text,
+    fontWeight: Typography.black,
+    letterSpacing: Typography.tight,
+  },
+  bannerSub: {
+    fontSize: Typography.sm,
+    color: Colors.textSecondary,
+    marginTop: 2,
+    marginBottom: Spacing.md,
+  },
+  startBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radii.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    alignSelf: 'flex-start',
+  },
+  startBtnText: {
+    color: Colors.background,
+    fontWeight: Typography.bold,
+    fontSize: Typography.md,
+  },
+
+  statsRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.md,
+    padding: Spacing.sm,
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: Typography.xxl,
+    color: Colors.text,
+    fontWeight: Typography.black,
+  },
+  statUnit: {
+    fontSize: Typography.xs,
+    color: Colors.textSecondary,
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.semibold,
+    letterSpacing: Typography.wide,
+    textTransform: 'uppercase',
+  },
+
+  sectionTitle: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.bold,
+    letterSpacing: Typography.wider,
+    marginBottom: Spacing.sm,
+  },
+  scheduleCard: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+    alignItems: 'flex-start',
+    gap: Spacing.md,
+  },
+  scheduleDay: {
+    fontSize: Typography.xs,
+    color: Colors.primary,
+    fontWeight: Typography.bold,
+    letterSpacing: Typography.wide,
+    width: 52,
+    textTransform: 'uppercase',
+    paddingTop: 2,
+  },
+  scheduleInfo: { flex: 1 },
+  scheduleName: {
+    fontSize: Typography.md,
+    color: Colors.text,
+    fontWeight: Typography.semibold,
+    marginBottom: Spacing.xs,
+  },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs },
+  tag: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: Radii.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+  },
+  tagText: {
+    fontSize: Typography.xs,
+    color: Colors.textSecondary,
+    fontWeight: Typography.medium,
   },
 });

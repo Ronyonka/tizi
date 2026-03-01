@@ -31,7 +31,14 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
+.env*
 .env*.local
+
+# Google service account keys
+*-credentials.json
+*-key.json
+gymtracker-*.json
 
 # typescript
 *.tsbuildinfo

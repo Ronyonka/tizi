@@ -1,53 +1,64 @@
 /**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
+ * Tizi App — Dark gym-style theme constants.
  */
 
-import { Platform } from 'react-native';
-
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
-
 export const Colors = {
-  light: {
-    text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
-  },
-  dark: {
-    text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
-  },
+  // Gym-style dark palette
+  background: '#0A0A0F',       // near-black background
+  surface: '#13131A',          // card / panel surface
+  surfaceAlt: '#1C1C27',       // slightly lighter surface
+  border: '#2A2A3A',           // subtle borders
+  primary: '#E8FF3D',          // electric lime — primary accent
+  primaryDark: '#C4D900',      // darker lime for pressed states
+  secondary: '#FF4D4D',        // red accent for alerts / active states
+  text: '#FFFFFF',             // primary text
+  textSecondary: '#9B9BAA',    // muted text
+  textMuted: '#5A5A72',        // very muted text
+  tabBar: '#0F0F18',           // bottom tab bar background
+  tabActive: '#E8FF3D',        // active tab icon/label
+  tabInactive: '#4A4A60',      // inactive tab icon/label
+  headerBg: '#0A0A0F',         // screen header background
+  success: '#4CFF91',          // green success
+  warning: '#FFA940',          // amber warning
 };
 
-export const Fonts = Platform.select({
-  ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
-    rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
-    mono: 'ui-monospace',
-  },
-  default: {
-    sans: 'normal',
-    serif: 'serif',
-    rounded: 'normal',
-    mono: 'monospace',
-  },
-  web: {
-    sans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-    serif: "Georgia, 'Times New Roman', serif",
-    rounded: "'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif",
-    mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-  },
-});
+export const Spacing = {
+  xs: 4,
+  sm: 8,
+  md: 16,
+  lg: 24,
+  xl: 32,
+  xxl: 48,
+};
+
+export const Radii = {
+  sm: 8,
+  md: 12,
+  lg: 20,
+  xl: 28,
+  full: 9999,
+};
+
+export const Typography = {
+  // Font sizes
+  xs: 11,
+  sm: 13,
+  md: 15,
+  lg: 18,
+  xl: 22,
+  xxl: 28,
+  display: 36,
+
+  // Font weights (as string literals for RN compatibility)
+  regular: '400' as const,
+  medium: '500' as const,
+  semibold: '600' as const,
+  bold: '700' as const,
+  black: '900' as const,
+
+  // Letter spacing
+  tight: -0.5,
+  normal: 0,
+  wide: 0.5,
+  wider: 1,
+};
