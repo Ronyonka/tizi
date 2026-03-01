@@ -1,130 +1,287 @@
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+    ActivityIndicator,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
 import { Log, Routine } from '@/services/googleSheets';
 
-const DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+// ─── Types ─────────────────────────────────────────────────────────────────
 
-const ACTIVITY_COLOR: Record<number, string> = {
-  0: Colors.surface,
-  1: Colors.primary,
-  2: Colors.border,
-  3: Colors.surfaceAlt,
-};
+type DayStatus = 'completed' | 'missed' | 'rest' | 'future' | 'today-rest' | 'today-scheduled';
 
-interface ProcessedLog {
-  date: string;
-  name: string;
-  sets: number;
-  volume: string;
-  pr: boolean;
-  rawDate: Date;
+interface CalendarDay {
+  date: Date;
+  dayOfMonth: number;
+  status: DayStatus;
+  isToday: boolean;
+  isCurrentMonth: boolean;
 }
+
+interface StreakStats {
+  current: number;
+  longest: number;
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const COL_HEADERS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Returns a YYYY-MM-DD string for a given Date, in local time. */
+function toDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Normalise any log date string to YYYY-MM-DD.
+ * Supports:
+ *   ISO-8601:  2026-03-01T... or 2026-03-01
+ *   DD/MM/YYYY: 01/03/2026
+ */
+function normaliseDateString(raw: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim().split(' ')[0]; // drop time portion
+
+  // DD/MM/YYYY
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+    const [d, m, y] = trimmed.split('/');
+    return `${y}-${m}-${d}`;
+  }
+
+  // Already YYYY-MM-DD or ISO prefix
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    return trimmed.substring(0, 10);
+  }
+
+  // Fallback
+  try {
+    const dt = new Date(trimmed);
+    if (!isNaN(dt.getTime())) return toDateKey(dt);
+  } catch {
+    // ignore
+  }
+  return trimmed;
+}
+
+/**
+ * Compute streak stats from the beginning of time to today.
+ * Rest days don't break the streak; missed scheduled days do.
+ */
+function computeStreaks(
+  scheduledDays: Set<string>,    // day-of-week names that have routines
+  loggedDates: Set<string>,      // YYYY-MM-DD dates that have logs
+  earliestDate: Date,
+  today: Date
+): StreakStats {
+  let current = 0;
+  let longest = 0;
+
+  const cursor = new Date(earliestDate);
+  cursor.setHours(0, 0, 0, 0);
+  const todayNorm = new Date(today);
+  todayNorm.setHours(0, 0, 0, 0);
+
+  while (cursor <= todayNorm) {
+    const dayName = DAY_NAMES[cursor.getDay()];
+    const dateKey = toDateKey(cursor);
+    const isScheduled = scheduledDays.has(dayName);
+    const isLogged = loggedDates.has(dateKey);
+    const isPast = cursor < todayNorm;
+
+    if (!isScheduled) {
+      // Rest day — no effect on streak
+    } else if (isLogged) {
+      // Completed — streak continues
+      current += 1;
+    } else if (isPast) {
+      // Scheduled but not logged and in the past — missed, reset
+      current = 0;
+    }
+    // Today + scheduled + not yet logged: don't touch streak
+
+    if (current > longest) longest = current;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return { current, longest };
+}
+
+// ─── Component ─────────────────────────────────────────────────────────────
 
 export default function CalendarScreen() {
   const [loading, setLoading] = useState(true);
-  const [logs, setLogs] = useState<ProcessedLog[]>([]);
-  const [heatmap, setHeatmap] = useState<number[][]>([]);
-  const [thisWeekActivity, setThisWeekActivity] = useState<number[]>(Array(7).fill(0));
+  const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
+  const [viewMonth, setViewMonth] = useState(() => new Date().getMonth()); // 0-based
+  const [scheduledDays, setScheduledDays] = useState<Set<string>>(new Set());
+  const [loggedDates, setLoggedDates] = useState<Set<string>>(new Set());
+  const [streaks, setStreaks] = useState<StreakStats>({ current: 0, longest: 0 });
 
-  useEffect(() => {
-    fetchLogs();
-  }, []);
-
-  const fetchLogs = async () => {
+  // ── Fetch data ──────────────────────────────────────────────────────────
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [logsRes, routinesRes] = await Promise.all([
+      const [routinesRes, logsRes] = await Promise.all([
+        fetch('/api/routines'),
         fetch('/api/logs'),
-        fetch('/api/routines')
       ]);
-      
-      const rawLogs: Log[] = await logsRes.json();
+
       const routines: Routine[] = await routinesRes.json();
+      const rawLogs: Log[] = await logsRes.json();
 
-      // Process logs for list
-      const processed: ProcessedLog[] = [];
-      const sessionsByDate: Record<string, Log[]> = {};
+      // Build scheduled-days set (day-of-week names)
+      const scheduled = new Set<string>(
+        routines.map((r) => r.day_of_week.trim())
+      );
 
-      rawLogs.forEach(log => {
-        const dateKey = log.date.split(' ')[0]; // DD/MM/YYYY or similar
-        if (!sessionsByDate[dateKey]) sessionsByDate[dateKey] = [];
-        sessionsByDate[dateKey].push(log);
-      });
+      // Build logged-dates set (YYYY-MM-DD)
+      const logged = new Set<string>(
+        rawLogs.map((l) => normaliseDateString(l.date)).filter(Boolean)
+      );
 
-      Object.entries(sessionsByDate).forEach(([dateStr, sessionLogs]) => {
-        const routineId = sessionLogs[0].routine_id;
-        const routine = routines.find(r => r.id === routineId);
-        const totalVolume = sessionLogs.reduce((acc, l) => acc + (l.weight_kg * (parseInt(l.reps) || 0)), 0);
-        
-        // Simple logic for PR (could be more complex)
-        const hasPR = false; 
+      setScheduledDays(scheduled);
+      setLoggedDates(logged);
 
-        // Try to parse the date safely
-        const parts = dateStr.split('/');
-        const dateObj = parts.length === 3 
-          ? new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]))
-          : new Date(dateStr);
+      // Determine earliest meaningful date
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-        processed.push({
-          date: dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
-          name: routine?.name || 'Workout',
-          sets: sessionLogs.length,
-          volume: `${totalVolume.toLocaleString()} kg`,
-          pr: hasPR,
-          rawDate: dateObj
-        });
-      });
+      let earliest = new Date(today);
+      // Look back at most 3 months for streak calc
+      earliest.setMonth(earliest.getMonth() - 3);
 
-      // Sort by date desc
-      processed.sort((a, b) => b.rawDate.getTime() - a.rawDate.getTime());
-      setLogs(processed);
-
-      // Generate heatmap for the last 4 weeks
-      const heatmapWeeks: number[][] = [];
-      
-      // Start of current week (Monday)
-      const now = new Date();
-      const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1; // 0 for Mon, 6 for Sun
-      const mondayOfThisWeek = new Date(now);
-      mondayOfThisWeek.setDate(now.getDate() - dayOfWeek);
-      mondayOfThisWeek.setHours(0, 0, 0, 0);
-
-      // Start 3 weeks before this week
-      const startDate = new Date(mondayOfThisWeek);
-      startDate.setDate(mondayOfThisWeek.getDate() - 21);
-
-      for (let w = 0; w < 4; w++) {
-        const week: number[] = [];
-        for (let d = 0; d < 7; d++) {
-          const currentDay = new Date(startDate);
-          currentDay.setDate(startDate.getDate() + (w * 7) + d);
-          const dayStr = currentDay.toLocaleDateString();
-          
-          const hasWorkout = Object.keys(sessionsByDate).some(k => {
-            const parts = k.split('/');
-            const kDate = parts.length === 3 
-              ? new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]))
-              : new Date(k);
-            return kDate.toLocaleDateString() === dayStr;
-          });
-          
-          week.push(hasWorkout ? 1 : 0);
+      if (logged.size > 0) {
+        const sortedDates = Array.from(logged).sort();
+        const firstLog = new Date(sortedDates[0]);
+        if (!isNaN(firstLog.getTime()) && firstLog < earliest) {
+          earliest = firstLog;
         }
-        heatmapWeeks.push(week);
       }
-      setHeatmap(heatmapWeeks);
-      setThisWeekActivity(heatmapWeeks[3]);
 
+      const stats = computeStreaks(scheduled, logged, earliest, today);
+      setStreaks(stats);
     } catch (error) {
-      console.error('Error fetching logs:', error);
+      console.error('[CalendarScreen] Error fetching data:', error);
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // ── Calendar grid builder ────────────────────────────────────────────────
+  const buildCalendarDays = (): CalendarDay[] => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const firstOfMonth = new Date(viewYear, viewMonth, 1);
+    const lastOfMonth = new Date(viewYear, viewMonth + 1, 0);
+
+    // Monday-first grid: figure out how many leading blanks
+    // getDay(): 0=Sun,1=Mon...6=Sat → convert to Mon-first: Mon=0...Sun=6
+    const firstDow = (firstOfMonth.getDay() + 6) % 7; // Mon=0
+
+    const days: CalendarDay[] = [];
+
+    // Leading days from previous month
+    for (let i = 0; i < firstDow; i++) {
+      const d = new Date(firstOfMonth);
+      d.setDate(d.getDate() - (firstDow - i));
+      days.push(buildDay(d, today, scheduledDays, loggedDates, false));
+    }
+
+    // Days of current month
+    for (let i = 1; i <= lastOfMonth.getDate(); i++) {
+      const d = new Date(viewYear, viewMonth, i);
+      days.push(buildDay(d, today, scheduledDays, loggedDates, true));
+    }
+
+    // Trailing days to fill 6-row grid (42 cells)
+    const remaining = 42 - days.length;
+    for (let i = 1; i <= remaining; i++) {
+      const d = new Date(lastOfMonth);
+      d.setDate(d.getDate() + i);
+      days.push(buildDay(d, today, scheduledDays, loggedDates, false));
+    }
+
+    return days;
   };
 
+  const buildDay = (
+    date: Date,
+    today: Date,
+    scheduled: Set<string>,
+    logged: Set<string>,
+    isCurrentMonth: boolean
+  ): CalendarDay => {
+    const isToday = toDateKey(date) === toDateKey(today);
+    const isPast = date < today;
+    const dayName = DAY_NAMES[date.getDay()];
+    const dateKey = toDateKey(date);
+    const isScheduled = scheduled.has(dayName);
+    const isLogged = logged.has(dateKey);
+
+    let status: DayStatus;
+    if (isToday) {
+      status = isScheduled ? 'today-scheduled' : 'today-rest';
+    } else if (!isCurrentMonth || !isPast) {
+      status = 'future';
+    } else if (!isScheduled) {
+      status = 'rest';
+    } else if (isLogged) {
+      status = 'completed';
+    } else {
+      status = 'missed';
+    }
+
+    return {
+      date,
+      dayOfMonth: date.getDate(),
+      status,
+      isToday,
+      isCurrentMonth,
+    };
+  };
+
+  // ── Month navigation ──────────────────────────────────────────────────────
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11); }
+    else setViewMonth(m => m - 1);
+  };
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewYear(y => y + 1); setViewMonth(0); }
+    else setViewMonth(m => m + 1);
+  };
+  const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString('en-US', {
+    month: 'long', year: 'numeric',
+  });
+
+  // ── Status → color ───────────────────────────────────────────────────────
+  const statusDotColor = (status: DayStatus): string => {
+    switch (status) {
+      case 'completed':       return Colors.success;
+      case 'missed':          return Colors.secondary;
+      case 'rest':            return Colors.surfaceAlt;
+      case 'today-scheduled': return Colors.primary;
+      case 'today-rest':      return Colors.surfaceAlt;
+      default:                return 'transparent';
+    }
+  };
+
+  const calendarDays = buildCalendarDays();
+
+  // ── Render ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -133,6 +290,8 @@ export default function CalendarScreen() {
     );
   }
 
+  const weeksCount = calendarDays.length / 7;
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -140,217 +299,320 @@ export default function CalendarScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
+        {/* Page header */}
         <Text style={styles.pageTitle}>Calendar</Text>
-        <Text style={styles.pageSubtitle}>{new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
 
-        {/* Month Heat Map */}
-        <View style={styles.heatMapCard}>
-          <Text style={styles.cardLabel}>ACTIVITY OVERVIEW (PAST 4 WEEKS)</Text>
-          {/* Day headers */}
-          <View style={styles.dayRow}>
-            {DAYS.map((d, i) => (
-              <Text key={`d-${i}`} style={styles.dayLabel}>
-                {d}
-              </Text>
+        {/* Streak stat cards */}
+        <View style={styles.streakRow}>
+          <View style={[styles.streakCard, styles.streakCardLeft]}>
+            <Text style={styles.streakEmoji}>🔥</Text>
+            <Text style={styles.streakCount}>{streaks.current}</Text>
+            <Text style={styles.streakLabel}>Current Streak</Text>
+            <Text style={styles.streakSub}>days</Text>
+          </View>
+          <View style={[styles.streakCard, styles.streakCardRight]}>
+            <Text style={styles.streakEmoji}>🏆</Text>
+            <Text style={styles.streakCount}>{streaks.longest}</Text>
+            <Text style={styles.streakLabel}>All-time Best</Text>
+            <Text style={styles.streakSub}>days</Text>
+          </View>
+        </View>
+
+        {/* Month navigation */}
+        <View style={styles.monthNav}>
+          <TouchableOpacity onPress={prevMonth} style={styles.navBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.navArrow}>‹</Text>
+          </TouchableOpacity>
+          <Text style={styles.monthLabel}>{monthLabel}</Text>
+          <TouchableOpacity onPress={nextMonth} style={styles.navBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.navArrow}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Calendar grid */}
+        <View style={styles.calendarCard}>
+          {/* Day-of-week headers */}
+          <View style={styles.colHeaders}>
+            {COL_HEADERS.map((h) => (
+              <View key={h} style={styles.colHeaderCell}>
+                <Text style={styles.colHeaderText}>{h}</Text>
+              </View>
             ))}
           </View>
-          {/* Weeks */}
-          {heatmap.map((week, wi) => (
-            <View key={`w-${wi}`} style={styles.dayRow}>
-              {week.map((activity, di) => (
-                <View
-                  key={`c-${di}`}
-                  style={[
-                    styles.dayCell,
-                    { backgroundColor: ACTIVITY_COLOR[activity] },
-                    wi === 3 && styles.dayCellCurrentWeek,
-                  ]}
-                />
-              ))}
-            </View>
-          ))}
-          {/* Legend */}
-          <View style={styles.legend}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: Colors.primary }]} />
-              <Text style={styles.legendText}>Done</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: Colors.surface }]} />
-              <Text style={styles.legendText}>Rest</Text>
-            </View>
-          </View>
-        </View>
 
-        {/* This week */}
-        <Text style={styles.sectionTitle}>THIS WEEK</Text>
-        <View style={styles.weekRow}>
-          {DAYS.map((d, i) => (
-            <View key={`wd-${i}`} style={styles.weekDay}>
-              <Text style={styles.weekDayLabel}>{d}</Text>
-              <View
-                style={[
-                  styles.weekDayDot,
-                  { backgroundColor: ACTIVITY_COLOR[thisWeekActivity[i]] },
-                  thisWeekActivity[i] === 1 && styles.weekDayDotActive,
-                ]}
-              />
-            </View>
-          ))}
-        </View>
+          {/* Week rows */}
+          {Array.from({ length: weeksCount }).map((_, wi) => (
+            <View key={wi} style={styles.weekRow}>
+              {calendarDays.slice(wi * 7, wi * 7 + 7).map((day, di) => {
+                const dotColor = statusDotColor(day.status);
+                const isToday = day.isToday;
+                const dim = !day.isCurrentMonth;
 
-        {/* Recent Logs */}
-        <Text style={styles.sectionTitle}>RECENT SESSIONS</Text>
-        {logs.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No workout logs found yet. Start training! 👊</Text>
-          </View>
-        ) : (
-          logs.map((log, i) => (
-            <View key={i} style={styles.logCard}>
-              <View style={styles.logHeader}>
-                <Text style={styles.logDate}>{log.date}</Text>
-                {log.pr && (
-                  <View style={styles.prBadge}>
-                    <Text style={styles.prText}>🏆 PR</Text>
+                return (
+                  <View
+                    key={di}
+                    style={[
+                      styles.dayCell,
+                      isToday && styles.dayCellToday,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.dayNumber,
+                        dim && styles.dayNumberDim,
+                        isToday && styles.dayNumberToday,
+                      ]}
+                    >
+                      {day.dayOfMonth}
+                    </Text>
+
+                    {/* Status dot — only show for current month */}
+                    {day.isCurrentMonth && day.status !== 'future' ? (
+                      <View
+                        style={[
+                          styles.statusDot,
+                          { backgroundColor: dotColor },
+                          day.status === 'rest' && styles.statusDotRest,
+                          day.status === 'today-rest' && styles.statusDotRest,
+                        ]}
+                      />
+                    ) : (
+                      <View style={styles.statusDotPlaceholder} />
+                    )}
                   </View>
-                )}
-              </View>
-              <Text style={styles.logName}>{log.name}</Text>
-              <View style={styles.logMeta}>
-                <Text style={styles.logMetaText}>{log.sets} sets</Text>
-                <Text style={styles.logMetaDot}>·</Text>
-                <Text style={styles.logMetaText}>{log.volume}</Text>
-              </View>
+                );
+              })}
             </View>
-          ))
-        )}
+          ))}
+        </View>
+
+        {/* Legend */}
+        <View style={styles.legend}>
+          <LegendItem color={Colors.success} label="Completed" />
+          <LegendItem color={Colors.secondary} label="Missed" />
+          <LegendItem color={Colors.surfaceAlt} label="Rest" borderColor={Colors.border} />
+          <LegendItem color={Colors.primary} label="Today" />
+        </View>
+
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+// ─── Sub-components ────────────────────────────────────────────────────────
+
+function LegendItem({
+  color,
+  label,
+  borderColor,
+}: {
+  color: string;
+  label: string;
+  borderColor?: string;
+}) {
+  return (
+    <View style={styles.legendItem}>
+      <View
+        style={[
+          styles.legendDot,
+          { backgroundColor: color },
+          borderColor ? { borderWidth: 1, borderColor } : undefined,
+        ]}
+      />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
+// ─── Styles ─────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   container: { flex: 1 },
   content: { padding: Spacing.md },
-  loadingContainer: { flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 
+  // Page title
   pageTitle: {
     fontSize: Typography.xxl,
     color: Colors.text,
     fontWeight: Typography.black,
     letterSpacing: Typography.tight,
-  },
-  pageSubtitle: {
-    fontSize: Typography.md,
-    color: Colors.textSecondary,
-    marginBottom: Spacing.lg,
-    marginTop: 2,
+    marginBottom: Spacing.md,
   },
 
-  heatMapCard: {
+  // Streak cards
+  streakRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  streakCard: {
+    flex: 1,
     backgroundColor: Colors.surface,
     borderRadius: Radii.lg,
-    padding: Spacing.md,
-    marginBottom: Spacing.lg,
-  },
-  cardLabel: {
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    fontWeight: Typography.bold,
-    letterSpacing: Typography.wider,
-    marginBottom: Spacing.sm,
-  },
-  dayRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.xs,
-  },
-  dayLabel: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    fontWeight: Typography.bold,
-  },
-  dayCell: {
-    flex: 1,
-    aspectRatio: 1,
-    marginHorizontal: 2,
-    borderRadius: Radii.sm,
-  },
-  dayCellCurrentWeek: {
-    borderWidth: 1,
-    borderColor: Colors.primary,
-  },
-
-  legend: { flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.sm },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
-  legendDot: { width: 10, height: 10, borderRadius: 3 },
-  legendText: { fontSize: Typography.xs, color: Colors.textSecondary },
-
-  sectionTitle: {
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    fontWeight: Typography.bold,
-    letterSpacing: Typography.wider,
-    marginBottom: Spacing.sm,
-  },
-
-  weekRow: {
-    flexDirection: 'row',
-    backgroundColor: Colors.surface,
-    borderRadius: Radii.md,
-    padding: Spacing.md,
-    justifyContent: 'space-between',
-    marginBottom: Spacing.lg,
-  },
-  weekDay: { alignItems: 'center', gap: Spacing.xs },
-  weekDayLabel: { fontSize: Typography.xs, color: Colors.textSecondary, fontWeight: Typography.bold },
-  weekDayDot: {
-    width: 28,
-    height: 28,
-    borderRadius: Radii.full,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  weekDayDotActive: { borderColor: Colors.primary },
-
-  logCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radii.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.sm,
-  },
-  logHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  logDate: { fontSize: Typography.xs, color: Colors.textMuted, fontWeight: Typography.medium },
-  prBadge: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: Radii.sm,
-    paddingHorizontal: Spacing.xs,
-  },
-  prText: { fontSize: Typography.xs, color: Colors.primary, fontWeight: Typography.bold },
-  logName: { fontSize: Typography.md, color: Colors.text, fontWeight: Typography.semibold, marginBottom: 4 },
-  logMeta: { flexDirection: 'row', gap: Spacing.xs },
-  logMetaText: { fontSize: Typography.sm, color: Colors.textSecondary },
-  logMetaDot: { color: Colors.textMuted },
-
-  emptyCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radii.md,
-    padding: Spacing.xl,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: Colors.border,
-    borderStyle: 'dashed',
   },
-  emptyText: {
-    fontSize: Typography.md,
+  streakCardLeft: {
+    borderTopColor: Colors.primary,
+    borderTopWidth: 2,
+  },
+  streakCardRight: {
+    borderTopColor: Colors.warning,
+    borderTopWidth: 2,
+  },
+  streakEmoji: { fontSize: 22, marginBottom: 4 },
+  streakCount: {
+    fontSize: Typography.display,
+    color: Colors.text,
+    fontWeight: Typography.black,
+    lineHeight: Typography.display,
+  },
+  streakLabel: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.bold,
+    letterSpacing: Typography.wider,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+  streakSub: {
+    fontSize: Typography.xs,
     color: Colors.textSecondary,
-    textAlign: 'center',
+  },
+
+  // Month nav
+  monthNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  navBtn: {
+    width: 36,
+    height: 36,
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  navArrow: {
+    fontSize: 22,
+    color: Colors.textSecondary,
+    lineHeight: 26,
+  },
+  monthLabel: {
+    fontSize: Typography.lg,
+    color: Colors.text,
+    fontWeight: Typography.semibold,
+  },
+
+  // Calendar card
+  calendarCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.lg,
+    padding: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.md,
+  },
+
+  // Column headers
+  colHeaders: {
+    flexDirection: 'row',
+    marginBottom: Spacing.xs,
+  },
+  colHeaderCell: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.xs,
+  },
+  colHeaderText: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.bold,
+  },
+
+  // Week rows
+  weekRow: {
+    flexDirection: 'row',
+  },
+
+  // Day cells
+  dayCell: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderRadius: Radii.sm,
+    marginHorizontal: 1,
+    marginVertical: 2,
+  },
+  dayCellToday: {
+    backgroundColor: Colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  dayNumber: {
+    fontSize: Typography.sm,
+    color: Colors.text,
+    fontWeight: Typography.medium,
+  },
+  dayNumberDim: {
+    color: Colors.textMuted,
+    opacity: 0.4,
+  },
+  dayNumberToday: {
+    color: Colors.primary,
+    fontWeight: Typography.bold,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: Radii.full,
+    marginTop: 3,
+  },
+  statusDotRest: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: 'transparent',
+  },
+  statusDotPlaceholder: {
+    width: 6,
+    height: 6,
+    marginTop: 3,
+  },
+
+  // Legend
+  legend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.md,
+    justifyContent: 'center',
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  legendDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 3,
+  },
+  legendText: {
+    fontSize: Typography.xs,
+    color: Colors.textSecondary,
   },
 });
