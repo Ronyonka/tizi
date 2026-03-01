@@ -1,163 +1,1075 @@
-import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+/**
+ * Workouts Screen
+ *
+ * Displays routines grouped by day of week.
+ * Supports add/edit/delete for routines and exercises.
+ * Syncs all data to Google Sheets via Expo API routes.
+ * Supports CSV bulk-import.
+ */
+
+import { Ionicons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    Animated,
+    FlatList,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
 
-const CATEGORIES = ['All', 'Push', 'Pull', 'Legs', 'Core', 'Cardio'];
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-const WORKOUTS = [
-  {
-    id: '1',
-    name: 'Push Day A',
-    category: 'Push',
-    exercises: 6,
-    duration: '55 min',
-    difficulty: 'Hard',
-    difficultyColor: Colors.secondary,
-  },
-  {
-    id: '2',
-    name: 'Pull Day A',
-    category: 'Pull',
-    exercises: 7,
-    duration: '60 min',
-    difficulty: 'Hard',
-    difficultyColor: Colors.secondary,
-  },
-  {
-    id: '3',
-    name: 'Leg Day',
-    category: 'Legs',
-    exercises: 8,
-    duration: '70 min',
-    difficulty: 'Brutal',
-    difficultyColor: '#FF2222',
-  },
-  {
-    id: '4',
-    name: 'Core Destroyer',
-    category: 'Core',
-    exercises: 5,
-    duration: '30 min',
-    difficulty: 'Medium',
-    difficultyColor: Colors.warning,
-  },
-  {
-    id: '5',
-    name: 'HIIT Cardio',
-    category: 'Cardio',
-    exercises: 4,
-    duration: '25 min',
-    difficulty: 'Medium',
-    difficultyColor: Colors.warning,
-  },
-  {
-    id: '6',
-    name: 'Push Day B',
-    category: 'Push',
-    exercises: 6,
-    duration: '55 min',
-    difficulty: 'Medium',
-    difficultyColor: Colors.warning,
-  },
-  {
-    id: '7',
-    name: 'Pull Day B',
-    category: 'Pull',
-    exercises: 6,
-    duration: '55 min',
-    difficulty: 'Hard',
-    difficultyColor: Colors.secondary,
-  },
+interface Exercise {
+  id: string;
+  name: string;
+  muscle_group: string;
+}
+
+interface Routine {
+  id: string;
+  name: string;
+  day_of_week: string;
+}
+
+interface RoutineExercise {
+  routine_id: string;
+  exercise_id: string;
+  sets: number;
+  reps: number;
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+const MUSCLE_GROUPS = [
+  'Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps',
+  'Legs', 'Quads', 'Hamstrings', 'Glutes', 'Calves',
+  'Core', 'Abs', 'Cardio', 'Full Body', 'Other',
 ];
 
-export default function WorkoutsScreen() {
-  const [activeCategory, setActiveCategory] = useState('All');
+const MUSCLE_COLORS: Record<string, string> = {
+  Chest: '#FF6B6B',
+  Back: '#4ECDC4',
+  Shoulders: '#45B7D1',
+  Biceps: '#96CEB4',
+  Triceps: '#88D8B0',
+  Legs: '#FFEAA7',
+  Quads: '#DDA0DD',
+  Hamstrings: '#F0E68C',
+  Glutes: '#FFB347',
+  Calves: '#87CEEB',
+  Core: '#98FB98',
+  Abs: '#7DCEA0',
+  Cardio: '#FF4D4D',
+  'Full Body': Colors.primary,
+  Other: Colors.textSecondary,
+};
 
-  const filtered =
-    activeCategory === 'All'
-      ? WORKOUTS
-      : WORKOUTS.filter((w) => w.category === activeCategory);
+function getMuscleColor(group: string): string {
+  return MUSCLE_COLORS[group] ?? Colors.textSecondary;
+}
+
+// ─── API helpers ────────────────────────────────────────────────────────────
+
+const API_BASE = '';  // Expo API routes are relative
+
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    ...options,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? 'API error');
+  return data as T;
+}
+
+// ─── Main Component ──────────────────────────────────────────────────────────
+
+export default function WorkoutsScreen() {
+  // Data
+  const [routines, setRoutines] = useState<Routine[]>([]);
+  const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [routineExercises, setRoutineExercises] = useState<RoutineExercise[]>([]);
+
+  // UI state
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedRoutines, setExpandedRoutines] = useState<Set<string>>(new Set());
+
+  // Modal: Add/Edit Routine
+  const [showRoutineModal, setShowRoutineModal] = useState(false);
+  const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
+  const [routineName, setRoutineName] = useState('');
+  const [routineDay, setRoutineDay] = useState(DAYS[0]);
+  const [routineLoading, setRoutineLoading] = useState(false);
+
+  // Modal: Add Exercise to Routine
+  const [showExerciseModal, setShowExerciseModal] = useState(false);
+  const [targetRoutineId, setTargetRoutineId] = useState<string | null>(null);
+  const [exerciseSearch, setExerciseSearch] = useState('');
+  const [exerciseTab, setExerciseTab] = useState<'search' | 'create'>('search');
+  const [newExName, setNewExName] = useState('');
+  const [newExMuscle, setNewExMuscle] = useState(MUSCLE_GROUPS[0]);
+  const [exSets, setExSets] = useState('3');
+  const [exReps, setExReps] = useState('10');
+  const [exerciseLoading, setExerciseLoading] = useState(false);
+
+  // Modal: Edit sets/reps
+  const [showEditSetsModal, setShowEditSetsModal] = useState(false);
+  const [editingRE, setEditingRE] = useState<(RoutineExercise & { exercise_name: string }) | null>(null);
+  const [editSets, setEditSets] = useState('3');
+  const [editReps, setEditReps] = useState('10');
+  const [editSetsLoading, setEditSetsLoading] = useState(false);
+
+  // CSV uploading
+  const [csvUploading, setCsvUploading] = useState(false);
+
+  // Animation for loading pulse
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (loading || syncing || csvUploading) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 0.6, duration: 700, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [loading, syncing, csvUploading]);
+
+  // ── Data loading ─────────────────────────────────────────────────────────
+
+  const loadAll = useCallback(async () => {
+    try {
+      setError(null);
+      const [r, e, re] = await Promise.all([
+        apiFetch<Routine[]>('/api/routines'),
+        apiFetch<Exercise[]>('/api/exercises'),
+        apiFetch<RoutineExercise[]>('/api/routine-exercises'),
+      ]);
+      setRoutines(r);
+      setExercises(e);
+      setRoutineExercises(re);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load data');
+    }
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    loadAll().finally(() => setLoading(false));
+  }, [loadAll]);
+
+  const refresh = useCallback(async () => {
+    setSyncing(true);
+    await loadAll();
+    setSyncing(false);
+  }, [loadAll]);
+
+  // ── Derived data ─────────────────────────────────────────────────────────
+
+  const exerciseMap = Object.fromEntries(exercises.map((e) => [e.id, e]));
+
+  const routinesByDay = DAYS.reduce<Record<string, Routine[]>>((acc, day) => {
+    acc[day] = routines.filter((r) => r.day_of_week === day);
+    return acc;
+  }, {});
+
+  const unscheduled = routines.filter((r) => !DAYS.includes(r.day_of_week));
+
+  // ── Routine CRUD ─────────────────────────────────────────────────────────
+
+  function openAddRoutine() {
+    setEditingRoutine(null);
+    setRoutineName('');
+    setRoutineDay(DAYS[0]);
+    setShowRoutineModal(true);
+  }
+
+  function openEditRoutine(routine: Routine) {
+    setEditingRoutine(routine);
+    setRoutineName(routine.name);
+    setRoutineDay(routine.day_of_week);
+    setShowRoutineModal(true);
+  }
+
+  async function saveRoutine() {
+    if (!routineName.trim()) {
+      Alert.alert('Validation', 'Please enter a routine name.');
+      return;
+    }
+    setRoutineLoading(true);
+    try {
+      if (editingRoutine) {
+        // PATCH
+        await apiFetch(`/api/routines/${editingRoutine.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name: routineName.trim(), day_of_week: routineDay }),
+        });
+        setRoutines((prev) =>
+          prev.map((r) =>
+            r.id === editingRoutine.id
+              ? { ...r, name: routineName.trim(), day_of_week: routineDay }
+              : r
+          )
+        );
+      } else {
+        // POST
+        const newRoutine = await apiFetch<Routine>('/api/routines', {
+          method: 'POST',
+          body: JSON.stringify({ name: routineName.trim(), day_of_week: routineDay }),
+        });
+        setRoutines((prev) => [...prev, newRoutine]);
+        setExpandedRoutines((prev) => new Set([...prev, newRoutine.id]));
+      }
+      setShowRoutineModal(false);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to save routine');
+    } finally {
+      setRoutineLoading(false);
+    }
+  }
+
+  function confirmDeleteRoutine(routine: Routine) {
+    Alert.alert(
+      'Delete Routine',
+      `Are you sure you want to delete "${routine.name}"? This will also remove all exercises in this routine.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiFetch(`/api/routines/${routine.id}`, { method: 'DELETE' });
+              setRoutines((prev) => prev.filter((r) => r.id !== routine.id));
+              setRoutineExercises((prev) =>
+                prev.filter((re) => re.routine_id !== routine.id)
+              );
+            } catch (err) {
+              Alert.alert('Error', err instanceof Error ? err.message : 'Failed to delete');
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  // ── Exercise CRUD ────────────────────────────────────────────────────────
+
+  function openAddExercise(routineId: string) {
+    setTargetRoutineId(routineId);
+    setExerciseSearch('');
+    setExerciseTab('search');
+    setNewExName('');
+    setNewExMuscle(MUSCLE_GROUPS[0]);
+    setExSets('3');
+    setExReps('10');
+    setShowExerciseModal(true);
+  }
+
+  const filteredExercises = exercises.filter((e) => {
+    const q = exerciseSearch.toLowerCase();
+    return e.name.toLowerCase().includes(q) || e.muscle_group.toLowerCase().includes(q);
+  });
+
+  // Exercises already in this routine
+  const routineExIds = new Set(
+    routineExercises
+      .filter((re) => re.routine_id === targetRoutineId)
+      .map((re) => re.exercise_id)
+  );
+
+  async function addExistingExercise(exercise: Exercise) {
+    if (!targetRoutineId) return;
+    if (routineExIds.has(exercise.id)) {
+      Alert.alert('Already Added', `"${exercise.name}" is already in this routine.`);
+      return;
+    }
+    setExerciseLoading(true);
+    try {
+      const sets = parseInt(exSets, 10) || 3;
+      const reps = parseInt(exReps, 10) || 10;
+      const re = await apiFetch<RoutineExercise>('/api/routine-exercises', {
+        method: 'POST',
+        body: JSON.stringify({ routine_id: targetRoutineId, exercise_id: exercise.id, sets, reps }),
+      });
+      setRoutineExercises((prev) => [...prev, re]);
+      setShowExerciseModal(false);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to add exercise');
+    } finally {
+      setExerciseLoading(false);
+    }
+  }
+
+  async function createAndAddExercise() {
+    if (!newExName.trim()) {
+      Alert.alert('Validation', 'Please enter an exercise name.');
+      return;
+    }
+    if (!targetRoutineId) return;
+    setExerciseLoading(true);
+    try {
+      // Create exercise first
+      const newEx = await apiFetch<Exercise>('/api/exercises', {
+        method: 'POST',
+        body: JSON.stringify({ name: newExName.trim(), muscle_group: newExMuscle }),
+      });
+      setExercises((prev) => [...prev, newEx]);
+
+      // Then link to routine
+      const sets = parseInt(exSets, 10) || 3;
+      const reps = parseInt(exReps, 10) || 10;
+      const re = await apiFetch<RoutineExercise>('/api/routine-exercises', {
+        method: 'POST',
+        body: JSON.stringify({ routine_id: targetRoutineId, exercise_id: newEx.id, sets, reps }),
+      });
+      setRoutineExercises((prev) => [...prev, re]);
+      setShowExerciseModal(false);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to create exercise');
+    } finally {
+      setExerciseLoading(false);
+    }
+  }
+
+  function openEditSets(re: RoutineExercise) {
+    const ex = exerciseMap[re.exercise_id];
+    setEditingRE({ ...re, exercise_name: ex?.name ?? 'Unknown' });
+    setEditSets(String(re.sets));
+    setEditReps(String(re.reps));
+    setShowEditSetsModal(true);
+  }
+
+  async function saveEditSets() {
+    if (!editingRE) return;
+    setEditSetsLoading(true);
+    try {
+      const sets = parseInt(editSets, 10) || 1;
+      const reps = parseInt(editReps, 10) || 1;
+      await apiFetch('/api/routine-exercises', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          routine_id: editingRE.routine_id,
+          exercise_id: editingRE.exercise_id,
+          sets,
+          reps,
+        }),
+      });
+      setRoutineExercises((prev) =>
+        prev.map((re) =>
+          re.routine_id === editingRE.routine_id && re.exercise_id === editingRE.exercise_id
+            ? { ...re, sets, reps }
+            : re
+        )
+      );
+      setShowEditSetsModal(false);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to update');
+    } finally {
+      setEditSetsLoading(false);
+    }
+  }
+
+  function confirmDeleteExercise(re: RoutineExercise, routine: Routine) {
+    const ex = exerciseMap[re.exercise_id];
+    Alert.alert(
+      'Remove Exercise',
+      `Remove "${ex?.name ?? 'this exercise'}" from "${routine.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiFetch('/api/routine-exercises', {
+                method: 'DELETE',
+                body: JSON.stringify({ routine_id: re.routine_id, exercise_id: re.exercise_id }),
+              });
+              setRoutineExercises((prev) =>
+                prev.filter(
+                  (r) => !(r.routine_id === re.routine_id && r.exercise_id === re.exercise_id)
+                )
+              );
+            } catch (err) {
+              Alert.alert('Error', err instanceof Error ? err.message : 'Failed to remove');
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  // ── CSV Upload ───────────────────────────────────────────────────────────
+
+  async function handleCSVUpload() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'text/plain', 'text/comma-separated-values', '*/*'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return;
+
+      const file = result.assets[0];
+      if (!file?.uri) return;
+
+      setCsvUploading(true);
+      const csv = await FileSystem.readAsStringAsync(file.uri);
+
+      const response = await apiFetch<{
+        success: boolean;
+        summary: {
+          rows_parsed: number;
+          exercises_added: number;
+          routines_added: number;
+          routine_exercises_added: number;
+        };
+      }>('/api/csv-upload', {
+        method: 'POST',
+        body: JSON.stringify({ csv }),
+      });
+
+      const s = response.summary;
+      Alert.alert(
+        '✅ CSV Imported',
+        `Parsed ${s.rows_parsed} rows\n• ${s.routines_added} new routines\n• ${s.exercises_added} new exercises\n• ${s.routine_exercises_added} new exercise links`,
+        [{ text: 'OK', onPress: refresh }]
+      );
+    } catch (err) {
+      Alert.alert('Import Failed', err instanceof Error ? err.message : 'Could not import CSV');
+    } finally {
+      setCsvUploading(false);
+    }
+  }
+
+  // ── Toggle expand ────────────────────────────────────────────────────────
+
+  function toggleExpand(routineId: string) {
+    setExpandedRoutines((prev) => {
+      const next = new Set(prev);
+      if (next.has(routineId)) { next.delete(routineId); }
+      else { next.add(routineId); }
+      return next;
+    });
+  }
+
+  // ── Render helpers ───────────────────────────────────────────────────────
+
+  function renderExerciseRow(re: RoutineExercise, routine: Routine) {
+    const ex = exerciseMap[re.exercise_id];
+    if (!ex) return null;
+    const color = getMuscleColor(ex.muscle_group);
+
+    return (
+      <View key={`${re.routine_id}_${re.exercise_id}`} style={styles.exerciseRow}>
+        <View style={styles.exerciseLeft}>
+          <View style={[styles.musclePill, { backgroundColor: color + '22', borderColor: color + '66' }]}>
+            <Text style={[styles.musclePillText, { color }]}>{ex.muscle_group}</Text>
+          </View>
+          <Text style={styles.exerciseName}>{ex.name}</Text>
+        </View>
+        <View style={styles.exerciseRight}>
+          <TouchableOpacity
+            style={styles.setsRepsBadge}
+            onPress={() => openEditSets(re)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.setsRepsText}>{re.sets}×{re.reps}</Text>
+            <Ionicons name="pencil" size={10} color={Colors.primary} style={{ marginLeft: 3 }} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => confirmDeleteExercise(re, routine)}
+            style={styles.deleteExBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="trash-outline" size={14} color={Colors.secondary} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  function renderRoutineCard(routine: Routine) {
+    const isExpanded = expandedRoutines.has(routine.id);
+    const res = routineExercises.filter((re) => re.routine_id === routine.id);
+
+    return (
+      <View key={routine.id} style={styles.routineCard}>
+        {/* Card header */}
+        <TouchableOpacity
+          style={styles.routineHeader}
+          onPress={() => toggleExpand(routine.id)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.routineHeaderLeft}>
+            <Text style={styles.routineName}>{routine.name}</Text>
+            <Text style={styles.routineSubtitle}>
+              {res.length} {res.length === 1 ? 'exercise' : 'exercises'}
+            </Text>
+          </View>
+          <View style={styles.routineHeaderRight}>
+            <TouchableOpacity
+              onPress={() => openEditRoutine(routine)}
+              style={styles.iconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="pencil-outline" size={16} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => confirmDeleteRoutine(routine)}
+              style={styles.iconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="trash-outline" size={16} color={Colors.secondary} />
+            </TouchableOpacity>
+            <Ionicons
+              name={isExpanded ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={Colors.textMuted}
+            />
+          </View>
+        </TouchableOpacity>
+
+        {/* Exercise list */}
+        {isExpanded && (
+          <View style={styles.exerciseList}>
+            {res.length === 0 ? (
+              <Text style={styles.emptyExercises}>No exercises yet</Text>
+            ) : (
+              res.map((re) => renderExerciseRow(re, routine))
+            )}
+            <TouchableOpacity
+              style={styles.addExerciseBtn}
+              onPress={() => openAddExercise(routine.id)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="add-circle-outline" size={16} color={Colors.primary} />
+              <Text style={styles.addExerciseBtnText}>Add Exercise</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  function renderDaySection(day: string) {
+    const dayRoutines = routinesByDay[day] ?? [];
+    if (dayRoutines.length === 0) return null;
+
+    return (
+      <View key={day} style={styles.daySection}>
+        <View style={styles.dayHeader}>
+          <Text style={styles.dayLabel}>{day.toUpperCase()}</Text>
+          <View style={styles.dayLine} />
+        </View>
+        {dayRoutines.map(renderRoutineCard)}
+      </View>
+    );
+  }
+
+  // ── Main render ──────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+          <Text style={styles.loadingText}>Loading routines…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* Page Header */}
+      {/* ── Page Header ── */}
       <View style={styles.pageHeader}>
         <Text style={styles.pageTitle}>Workouts</Text>
-        <TouchableOpacity style={styles.addBtn}>
-          <Text style={styles.addBtnText}>+ New</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          {/* CSV Upload button */}
+          <TouchableOpacity
+            style={[styles.iconHeaderBtn, csvUploading && styles.iconHeaderBtnLoading]}
+            onPress={handleCSVUpload}
+            disabled={csvUploading}
+            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          >
+            {csvUploading ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Ionicons name="cloud-upload-outline" size={22} color={Colors.textSecondary} />
+            )}
+          </TouchableOpacity>
+
+          {/* Refresh button */}
+          <TouchableOpacity
+            style={styles.iconHeaderBtn}
+            onPress={refresh}
+            disabled={syncing}
+            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          >
+            {syncing ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Ionicons name="refresh-outline" size={22} color={Colors.textSecondary} />
+            )}
+          </TouchableOpacity>
+
+          {/* Add routine button */}
+          <TouchableOpacity style={styles.addBtn} onPress={openAddRoutine} activeOpacity={0.8}>
+            <Ionicons name="add" size={16} color={Colors.background} />
+            <Text style={styles.addBtnText}>Routine</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Category Filter */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRow}
-      >
-        {CATEGORIES.map((cat) => (
-          <TouchableOpacity
-            key={cat}
-            style={[styles.filterChip, activeCategory === cat && styles.filterChipActive]}
-            onPress={() => setActiveCategory(cat)}
-          >
-            <Text
-              style={[
-                styles.filterChipText,
-                activeCategory === cat && styles.filterChipTextActive,
-              ]}
-            >
-              {cat}
-            </Text>
+      {/* Error banner */}
+      {error && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle-outline" size={16} color={Colors.secondary} />
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={refresh}>
+            <Text style={styles.errorRetry}>Retry</Text>
           </TouchableOpacity>
-        ))}
-      </ScrollView>
+        </View>
+      )}
 
-      {/* Workout List */}
+      {/* ── Routine List ── */}
       <ScrollView
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {filtered.map((workout) => (
-          <TouchableOpacity key={workout.id} style={styles.workoutCard} activeOpacity={0.7}>
-            <View style={styles.workoutLeft}>
-              <Text style={styles.workoutName}>{workout.name}</Text>
-              <View style={styles.workoutMeta}>
-                <Text style={styles.metaText}>{workout.exercises} exercises</Text>
-                <Text style={styles.metaDot}>·</Text>
-                <Text style={styles.metaText}>{workout.duration}</Text>
+        {routines.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="barbell-outline" size={48} color={Colors.textMuted} />
+            <Text style={styles.emptyTitle}>No routines yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Tap "+ Routine" to create your first workout,{'\n'}or upload a CSV file.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {DAYS.map(renderDaySection)}
+            {/* Unscheduled */}
+            {unscheduled.length > 0 && (
+              <View style={styles.daySection}>
+                <View style={styles.dayHeader}>
+                  <Text style={[styles.dayLabel, { color: Colors.textMuted }]}>UNSCHEDULED</Text>
+                  <View style={[styles.dayLine, { backgroundColor: Colors.border }]} />
+                </View>
+                {unscheduled.map(renderRoutineCard)}
               </View>
-            </View>
-            <View style={styles.workoutRight}>
-              <View
-                style={[
-                  styles.difficultyBadge,
-                  { borderColor: workout.difficultyColor },
-                ]}
-              >
-                <Text style={[styles.difficultyText, { color: workout.difficultyColor }]}>
-                  {workout.difficulty}
-                </Text>
-              </View>
-              <Text style={styles.chevron}>›</Text>
-            </View>
-          </TouchableOpacity>
-        ))}
+            )}
+          </>
+        )}
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          MODAL: Add / Edit Routine
+      ═══════════════════════════════════════════════════════════════════ */}
+      <Modal
+        visible={showRoutineModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowRoutineModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowRoutineModal(false)} />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>
+              {editingRoutine ? 'Edit Routine' : 'New Routine'}
+            </Text>
+
+            {/* Name input */}
+            <Text style={styles.fieldLabel}>Routine Name</Text>
+            <TextInput
+              style={styles.textInput}
+              value={routineName}
+              onChangeText={setRoutineName}
+              placeholder="e.g. Push Day A"
+              placeholderTextColor={Colors.textMuted}
+              autoFocus
+              returnKeyType="done"
+            />
+
+            {/* Day picker */}
+            <Text style={styles.fieldLabel}>Day of Week</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.dayPicker}
+            >
+              {DAYS.map((day) => (
+                <TouchableOpacity
+                  key={day}
+                  style={[
+                    styles.dayChip,
+                    routineDay === day && styles.dayChipActive,
+                  ]}
+                  onPress={() => setRoutineDay(day)}
+                >
+                  <Text
+                    style={[
+                      styles.dayChipText,
+                      routineDay === day && styles.dayChipTextActive,
+                    ]}
+                  >
+                    {day.slice(0, 3)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Save button */}
+            <TouchableOpacity
+              style={[styles.primaryBtn, routineLoading && { opacity: 0.6 }]}
+              onPress={saveRoutine}
+              disabled={routineLoading}
+            >
+              {routineLoading ? (
+                <ActivityIndicator size="small" color={Colors.background} />
+              ) : (
+                <Text style={styles.primaryBtnText}>
+                  {editingRoutine ? 'Save Changes' : 'Create Routine'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          MODAL: Add Exercise to Routine
+      ═══════════════════════════════════════════════════════════════════ */}
+      <Modal
+        visible={showExerciseModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowExerciseModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowExerciseModal(false)} />
+          <View style={[styles.sheet, styles.sheetTall]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Add Exercise</Text>
+
+            {/* Sets / Reps row (common to both tabs) */}
+            <View style={styles.setsRepsRow}>
+              <View style={styles.setsRepsField}>
+                <Text style={styles.fieldLabel}>Sets</Text>
+                <View style={styles.stepperRow}>
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setExSets((v) => String(Math.max(1, parseInt(v, 10) - 1)))}
+                  >
+                    <Text style={styles.stepperBtnText}>−</Text>
+                  </TouchableOpacity>
+                  <TextInput
+                    style={styles.stepperInput}
+                    value={exSets}
+                    onChangeText={setExSets}
+                    keyboardType="number-pad"
+                  />
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setExSets((v) => String(parseInt(v, 10) + 1))}
+                  >
+                    <Text style={styles.stepperBtnText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={styles.setsRepsField}>
+                <Text style={styles.fieldLabel}>Reps</Text>
+                <View style={styles.stepperRow}>
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setExReps((v) => String(Math.max(1, parseInt(v, 10) - 1)))}
+                  >
+                    <Text style={styles.stepperBtnText}>−</Text>
+                  </TouchableOpacity>
+                  <TextInput
+                    style={styles.stepperInput}
+                    value={exReps}
+                    onChangeText={setExReps}
+                    keyboardType="number-pad"
+                  />
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setExReps((v) => String(parseInt(v, 10) + 1))}
+                  >
+                    <Text style={styles.stepperBtnText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            {/* Tab switcher */}
+            <View style={styles.tabRow}>
+              <TouchableOpacity
+                style={[styles.tabBtn, exerciseTab === 'search' && styles.tabBtnActive]}
+                onPress={() => setExerciseTab('search')}
+              >
+                <Text style={[styles.tabBtnText, exerciseTab === 'search' && styles.tabBtnTextActive]}>
+                  Search Library
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tabBtn, exerciseTab === 'create' && styles.tabBtnActive]}
+                onPress={() => setExerciseTab('create')}
+              >
+                <Text style={[styles.tabBtnText, exerciseTab === 'create' && styles.tabBtnTextActive]}>
+                  Create New
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {exerciseTab === 'search' ? (
+              <>
+                <TextInput
+                  style={[styles.textInput, { marginBottom: Spacing.sm }]}
+                  value={exerciseSearch}
+                  onChangeText={setExerciseSearch}
+                  placeholder="Search exercises…"
+                  placeholderTextColor={Colors.textMuted}
+                />
+                <FlatList
+                  data={filteredExercises}
+                  keyExtractor={(item) => item.id}
+                  style={styles.exercisePickerList}
+                  showsVerticalScrollIndicator={false}
+                  ListEmptyComponent={
+                    <Text style={styles.emptyExercises}>No exercises found</Text>
+                  }
+                  renderItem={({ item }) => {
+                    const color = getMuscleColor(item.muscle_group);
+                    const alreadyAdded = routineExIds.has(item.id);
+                    return (
+                      <TouchableOpacity
+                        style={[
+                          styles.exercisePickerRow,
+                          alreadyAdded && styles.exercisePickerRowDisabled,
+                        ]}
+                        onPress={() => addExistingExercise(item)}
+                        disabled={alreadyAdded || exerciseLoading}
+                        activeOpacity={0.7}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.exerciseName, alreadyAdded && { color: Colors.textMuted }]}>
+                            {item.name}
+                          </Text>
+                          <View style={[styles.musclePill, { backgroundColor: color + '22', borderColor: color + '66', marginTop: 2, alignSelf: 'flex-start' }]}>
+                            <Text style={[styles.musclePillText, { color }]}>{item.muscle_group}</Text>
+                          </View>
+                        </View>
+                        {alreadyAdded ? (
+                          <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
+                        ) : exerciseLoading ? (
+                          <ActivityIndicator size="small" color={Colors.primary} />
+                        ) : (
+                          <Ionicons name="add-circle-outline" size={20} color={Colors.primary} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <Text style={styles.fieldLabel}>Exercise Name</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newExName}
+                  onChangeText={setNewExName}
+                  placeholder="e.g. Barbell Squat"
+                  placeholderTextColor={Colors.textMuted}
+                />
+
+                <Text style={styles.fieldLabel}>Muscle Group</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.musclePickerRow}
+                >
+                  {MUSCLE_GROUPS.map((mg) => {
+                    const color = getMuscleColor(mg);
+                    const isActive = newExMuscle === mg;
+                    return (
+                      <TouchableOpacity
+                        key={mg}
+                        style={[
+                          styles.muscleChip,
+                          {
+                            backgroundColor: isActive ? color + '33' : Colors.surface,
+                            borderColor: isActive ? color : Colors.border,
+                          },
+                        ]}
+                        onPress={() => setNewExMuscle(mg)}
+                      >
+                        <Text style={[styles.muscleChipText, { color: isActive ? color : Colors.textSecondary }]}>
+                          {mg}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                <TouchableOpacity
+                  style={[styles.primaryBtn, { marginTop: Spacing.md }, exerciseLoading && { opacity: 0.6 }]}
+                  onPress={createAndAddExercise}
+                  disabled={exerciseLoading}
+                >
+                  {exerciseLoading ? (
+                    <ActivityIndicator size="small" color={Colors.background} />
+                  ) : (
+                    <Text style={styles.primaryBtnText}>Create & Add</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          MODAL: Edit Sets / Reps
+      ═══════════════════════════════════════════════════════════════════ */}
+      <Modal
+        visible={showEditSetsModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowEditSetsModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowEditSetsModal(false)} />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Edit Sets & Reps</Text>
+            {editingRE && (
+              <Text style={styles.sheetSubtitle}>{editingRE.exercise_name}</Text>
+            )}
+
+            <View style={styles.setsRepsRow}>
+              <View style={styles.setsRepsField}>
+                <Text style={styles.fieldLabel}>Sets</Text>
+                <View style={styles.stepperRow}>
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setEditSets((v) => String(Math.max(1, parseInt(v, 10) - 1)))}
+                  >
+                    <Text style={styles.stepperBtnText}>−</Text>
+                  </TouchableOpacity>
+                  <TextInput
+                    style={styles.stepperInput}
+                    value={editSets}
+                    onChangeText={setEditSets}
+                    keyboardType="number-pad"
+                  />
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setEditSets((v) => String(parseInt(v, 10) + 1))}
+                  >
+                    <Text style={styles.stepperBtnText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={styles.setsRepsField}>
+                <Text style={styles.fieldLabel}>Reps</Text>
+                <View style={styles.stepperRow}>
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setEditReps((v) => String(Math.max(1, parseInt(v, 10) - 1)))}
+                  >
+                    <Text style={styles.stepperBtnText}>−</Text>
+                  </TouchableOpacity>
+                  <TextInput
+                    style={styles.stepperInput}
+                    value={editReps}
+                    onChangeText={setEditReps}
+                    keyboardType="number-pad"
+                  />
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setEditReps((v) => String(parseInt(v, 10) + 1))}
+                  >
+                    <Text style={styles.stepperBtnText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.primaryBtn, editSetsLoading && { opacity: 0.6 }]}
+              onPress={saveEditSets}
+              disabled={editSetsLoading}
+            >
+              {editSetsLoading ? (
+                <ActivityIndicator size="small" color={Colors.background} />
+              ) : (
+                <Text style={styles.primaryBtnText}>Save</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
 
+  centerContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.md,
+  },
+  loadingText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sm,
+  },
+
+  // ── Header ──
   pageHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.md,
     paddingTop: Spacing.sm,
     paddingBottom: Spacing.sm,
@@ -168,7 +1080,24 @@ const styles = StyleSheet.create({
     fontWeight: Typography.black,
     letterSpacing: Typography.tight,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  iconHeaderBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: Radii.full,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconHeaderBtnLoading: { opacity: 0.7 },
   addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: Colors.primary,
     borderRadius: Radii.full,
     paddingHorizontal: Spacing.md,
@@ -180,12 +1109,238 @@ const styles = StyleSheet.create({
     fontSize: Typography.sm,
   },
 
-  filterRow: {
+  // ── Error banner ──
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    backgroundColor: Colors.secondary + '22',
+    borderRadius: Radii.sm,
+    padding: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.secondary + '44',
+  },
+  errorText: { flex: 1, color: Colors.secondary, fontSize: Typography.sm },
+  errorRetry: {
+    color: Colors.primary,
+    fontWeight: Typography.bold,
+    fontSize: Typography.sm,
+  },
+
+  // ── Scroll ──
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: Spacing.md, paddingTop: Spacing.xs },
+
+  // ── Empty state ──
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 80,
+    gap: Spacing.md,
+  },
+  emptyTitle: {
+    fontSize: Typography.lg,
+    color: Colors.textSecondary,
+    fontWeight: Typography.semibold,
+  },
+  emptySubtitle: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
+  // ── Day section ──
+  daySection: { marginBottom: Spacing.lg },
+  dayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  dayLabel: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.black,
+    color: Colors.primary,
+    letterSpacing: Typography.wider,
+  },
+  dayLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.primary + '33',
+  },
+
+  // ── Routine card ──
+  routineCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.md,
+    marginBottom: Spacing.sm,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  routineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Spacing.md,
+  },
+  routineHeaderLeft: { flex: 1 },
+  routineName: {
+    fontSize: Typography.md,
+    color: Colors.text,
+    fontWeight: Typography.semibold,
+  },
+  routineSubtitle: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  routineHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  iconBtn: {
+    padding: 4,
+  },
+
+  // ── Exercise rows ──
+  exerciseList: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
     paddingHorizontal: Spacing.md,
     paddingBottom: Spacing.sm,
-    gap: Spacing.xs,
+    paddingTop: 4,
   },
-  filterChip: {
+  exerciseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border + '66',
+  },
+  exerciseLeft: { flex: 1, gap: 4 },
+  exerciseName: {
+    fontSize: Typography.sm,
+    color: Colors.text,
+    fontWeight: Typography.medium,
+  },
+  musclePill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: Radii.full,
+    borderWidth: 1,
+  },
+  musclePillText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    letterSpacing: 0.2,
+  },
+  exerciseRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  setsRepsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primary + '22',
+    borderRadius: Radii.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: Colors.primary + '44',
+  },
+  setsRepsText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    color: Colors.primary,
+  },
+  deleteExBtn: { padding: 4 },
+
+  emptyExercises: {
+    color: Colors.textMuted,
+    fontSize: Typography.sm,
+    paddingVertical: Spacing.sm,
+    textAlign: 'center',
+  },
+  addExerciseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingTop: Spacing.sm,
+    alignSelf: 'center',
+  },
+  addExerciseBtnText: {
+    color: Colors.primary,
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+  },
+
+  // ── Modals / Sheets ──
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  sheet: {
+    backgroundColor: Colors.surfaceAlt,
+    borderTopLeftRadius: Radii.xl,
+    borderTopRightRadius: Radii.xl,
+    padding: Spacing.lg,
+    paddingBottom: Spacing.xxl,
+  },
+  sheetTall: { maxHeight: '85%' },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: Radii.full,
+    backgroundColor: Colors.border,
+    alignSelf: 'center',
+    marginBottom: Spacing.md,
+  },
+  sheetTitle: {
+    fontSize: Typography.xl,
+    color: Colors.text,
+    fontWeight: Typography.bold,
+    marginBottom: 4,
+  },
+  sheetSubtitle: {
+    fontSize: Typography.sm,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
+  },
+
+  // Fields
+  fieldLabel: {
+    fontSize: Typography.xs,
+    color: Colors.textSecondary,
+    fontWeight: Typography.semibold,
+    letterSpacing: Typography.wide,
+    textTransform: 'uppercase',
+    marginBottom: Spacing.xs,
+    marginTop: Spacing.md,
+  },
+  textInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    color: Colors.text,
+    fontSize: Typography.md,
+    padding: Spacing.md,
+  },
+
+  // Day picker
+  dayPicker: {
+    gap: Spacing.xs,
+    paddingVertical: Spacing.xs,
+  },
+  dayChip: {
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.xs,
     borderRadius: Radii.full,
@@ -193,49 +1348,114 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  filterChipActive: {
+  dayChipActive: {
     backgroundColor: Colors.primary,
     borderColor: Colors.primary,
   },
-  filterChipText: {
+  dayChipText: {
     fontSize: Typography.sm,
     color: Colors.textSecondary,
     fontWeight: Typography.medium,
   },
-  filterChipTextActive: {
+  dayChipTextActive: {
     color: Colors.background,
     fontWeight: Typography.bold,
   },
 
-  list: { flex: 1 },
-  listContent: { paddingHorizontal: Spacing.md, gap: Spacing.sm },
-
-  workoutCard: {
+  // Tabs
+  tabRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.md,
+    padding: 3,
+    marginVertical: Spacing.md,
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: Spacing.xs,
+    alignItems: 'center',
+    borderRadius: Radii.sm,
+  },
+  tabBtnActive: { backgroundColor: Colors.surfaceAlt },
+  tabBtnText: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+  },
+  tabBtnTextActive: {
+    color: Colors.text,
+    fontWeight: Typography.semibold,
+  },
+
+  // Exercise picker list
+  exercisePickerList: { flex: 1, marginBottom: Spacing.sm },
+  exercisePickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border + '55',
+  },
+  exercisePickerRowDisabled: { opacity: 0.5 },
+
+  // Muscle chips
+  musclePickerRow: { gap: Spacing.xs, paddingVertical: Spacing.xs },
+  muscleChip: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 5,
+    borderRadius: Radii.full,
+    borderWidth: 1,
+  },
+  muscleChipText: { fontSize: Typography.xs, fontWeight: Typography.semibold },
+
+  // Steppers
+  setsRepsRow: {
+    flexDirection: 'row',
+    gap: Spacing.lg,
+    marginTop: Spacing.md,
+  },
+  setsRepsField: { flex: 1 },
+  stepperRow: {
+    flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.surface,
     borderRadius: Radii.md,
-    padding: Spacing.md,
-  },
-  workoutLeft: { flex: 1 },
-  workoutName: {
-    fontSize: Typography.md,
-    color: Colors.text,
-    fontWeight: Typography.semibold,
-    marginBottom: 4,
-  },
-  workoutMeta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
-  metaText: { fontSize: Typography.sm, color: Colors.textSecondary },
-  metaDot: { color: Colors.textMuted },
-
-  workoutRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  difficultyBadge: {
     borderWidth: 1,
-    borderRadius: Radii.sm,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
+    borderColor: Colors.border,
+    overflow: 'hidden',
   },
-  difficultyText: { fontSize: Typography.xs, fontWeight: Typography.bold, letterSpacing: 0.3 },
-  chevron: { fontSize: Typography.xl, color: Colors.textMuted },
+  stepperBtn: {
+    width: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    backgroundColor: Colors.surfaceAlt,
+  },
+  stepperBtnText: {
+    color: Colors.primary,
+    fontSize: Typography.lg,
+    fontWeight: Typography.bold,
+  },
+  stepperInput: {
+    flex: 1,
+    textAlign: 'center',
+    color: Colors.text,
+    fontSize: Typography.lg,
+    fontWeight: Typography.bold,
+    paddingVertical: Spacing.sm,
+  },
+
+  // Primary button
+  primaryBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radii.full,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    marginTop: Spacing.lg,
+  },
+  primaryBtnText: {
+    color: Colors.background,
+    fontWeight: Typography.bold,
+    fontSize: Typography.md,
+  },
 });

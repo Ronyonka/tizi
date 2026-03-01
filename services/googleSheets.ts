@@ -65,9 +65,7 @@ export function getSheetClient() {
 
 /**
  * Reads all rows from a named sheet tab.
- * @param tab  One of the SHEET_NAMES values
- * @param range Optional A1 notation override (e.g. "A2:G"). Defaults to the whole sheet.
- * @returns     Array of string arrays (rows), with the header row skipped.
+ * Returns rows starting from row 2 (header skipped).
  */
 export async function readSheet(tab: SheetName, range?: string): Promise<string[][]> {
   const { spreadsheetId } = getConfig();
@@ -85,8 +83,6 @@ export async function readSheet(tab: SheetName, range?: string): Promise<string[
 
 /**
  * Appends a single row to a named sheet tab.
- * @param tab    One of the SHEET_NAMES values
- * @param values Array of cell values to append
  */
 export async function appendRow(tab: SheetName, values: (string | number)[]): Promise<void> {
   const { spreadsheetId } = getConfig();
@@ -103,30 +99,124 @@ export async function appendRow(tab: SheetName, values: (string | number)[]): Pr
   });
 }
 
-// ─── Typed data-access functions ───────────────────────────────────────────
+/**
+ * Appends multiple rows to a named sheet tab in a single API call.
+ */
+export async function batchAppendRows(
+  tab: SheetName,
+  rows: (string | number)[][]
+): Promise<void> {
+  if (rows.length === 0) return;
+  const { spreadsheetId } = getConfig();
+  const sheets = getSheetClient();
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${tab}!A1`,
+    valueInputOption: 'USER_ENTERED',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: {
+      values: rows,
+    },
+  });
+}
 
 /**
- * Returns all exercises from the Exercises tab.
- * Columns: id | name | muscle_group
+ * Gets the sheet metadata needed for batchUpdate operations (row deletion).
+ * Returns the sheetId (numeric) for a given tab name.
  */
+async function getSheetId(tab: SheetName): Promise<number> {
+  const { spreadsheetId } = getConfig();
+  const sheets = getSheetClient();
+
+  const response = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties',
+  });
+
+  const sheet = response.data.sheets?.find(
+    (s) => s.properties?.title === tab
+  );
+
+  if (sheet?.properties?.sheetId == null) {
+    throw new Error(`[GoogleSheets] Tab "${tab}" not found in spreadsheet`);
+  }
+
+  return sheet?.properties?.sheetId ?? 0;
+}
+
+/**
+ * Finds the 1-indexed row number (including header) of a row where column A matches `id`.
+ * Returns -1 if not found.
+ */
+async function findRowIndexById(tab: SheetName, id: string): Promise<number> {
+  const rows = await readSheet(tab); // starts at row 2
+  const rowIndex = rows.findIndex((r) => r[0] === id);
+  if (rowIndex === -1) return -1;
+  return rowIndex + 2; // +1 for 0-index, +1 for header
+}
+
+/**
+ * Updates the values of a specific row (1-indexed) in a tab.
+ */
+async function updateRow(
+  tab: SheetName,
+  rowIndex: number,
+  values: (string | number)[]
+): Promise<void> {
+  const { spreadsheetId } = getConfig();
+  const sheets = getSheetClient();
+
+  const colEnd = String.fromCharCode(65 + values.length - 1); // A, B, C...
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${tab}!A${rowIndex}:${colEnd}${rowIndex}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: {
+      values: [values],
+    },
+  });
+}
+
+/**
+ * Deletes a specific row (1-indexed) from a tab using batchUpdate.
+ */
+async function deleteRow(tab: SheetName, rowIndex: number): Promise<void> {
+  const { spreadsheetId } = getConfig();
+  const sheets = getSheetClient();
+  const sheetId = await getSheetId(tab);
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIndex - 1, // 0-indexed
+              endIndex: rowIndex,       // exclusive
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
+// ─── Typed data-access: READ ───────────────────────────────────────────────
+
 export async function getExercises(): Promise<Exercise[]> {
   const rows = await readSheet(SHEET_NAMES.EXERCISES);
   return rows.map(([id, name, muscle_group]) => ({ id, name, muscle_group }));
 }
 
-/**
- * Returns all routines from the Routines tab.
- * Columns: id | name | day_of_week
- */
 export async function getRoutines(): Promise<Routine[]> {
   const rows = await readSheet(SHEET_NAMES.ROUTINES);
   return rows.map(([id, name, day_of_week]) => ({ id, name, day_of_week }));
 }
 
-/**
- * Returns all routine–exercise links from the Routine_Exercises tab.
- * Columns: routine_id | exercise_id | sets | reps
- */
 export async function getRoutineExercises(): Promise<RoutineExercise[]> {
   const rows = await readSheet(SHEET_NAMES.ROUTINE_EXERCISES);
   return rows.map(([routine_id, exercise_id, sets, reps]) => ({
@@ -137,10 +227,6 @@ export async function getRoutineExercises(): Promise<RoutineExercise[]> {
   }));
 }
 
-/**
- * Returns all workout logs from the Logs tab.
- * Columns: id | date | routine_id | exercise_id | sets | reps | weight_kg
- */
 export async function getLogs(): Promise<Log[]> {
   const rows = await readSheet(SHEET_NAMES.LOGS);
   return rows.map(([id, date, routine_id, exercise_id, sets, reps, weight_kg]) => ({
@@ -154,10 +240,110 @@ export async function getLogs(): Promise<Log[]> {
   }));
 }
 
+// ─── Typed data-access: WRITE (Exercises) ─────────────────────────────────
+
+export async function appendExercise(exercise: Exercise): Promise<void> {
+  await appendRow(SHEET_NAMES.EXERCISES, [
+    exercise.id,
+    exercise.name,
+    exercise.muscle_group,
+  ]);
+}
+
+// ─── Typed data-access: WRITE (Routines) ──────────────────────────────────
+
+export async function appendRoutine(routine: Routine): Promise<void> {
+  await appendRow(SHEET_NAMES.ROUTINES, [
+    routine.id,
+    routine.name,
+    routine.day_of_week,
+  ]);
+}
+
+export async function updateRoutine(
+  id: string,
+  fields: Partial<Pick<Routine, 'name' | 'day_of_week'>>
+): Promise<void> {
+  const rowIndex = await findRowIndexById(SHEET_NAMES.ROUTINES, id);
+  if (rowIndex === -1) throw new Error(`Routine "${id}" not found`);
+
+  // Read existing row to preserve unchanged fields
+  const rows = await readSheet(SHEET_NAMES.ROUTINES);
+  const existing = rows.find((r) => r[0] === id);
+  if (!existing) throw new Error(`Routine "${id}" not found`);
+
+  const [existingId, existingName, existingDay] = existing;
+  await updateRow(SHEET_NAMES.ROUTINES, rowIndex, [
+    existingId,
+    fields.name ?? existingName,
+    fields.day_of_week ?? existingDay,
+  ]);
+}
+
+export async function deleteRoutine(id: string): Promise<void> {
+  const rowIndex = await findRowIndexById(SHEET_NAMES.ROUTINES, id);
+  if (rowIndex === -1) throw new Error(`Routine "${id}" not found`);
+  await deleteRow(SHEET_NAMES.ROUTINES, rowIndex);
+}
+
+// ─── Typed data-access: WRITE (Routine_Exercises) ─────────────────────────
+
+export async function appendRoutineExercise(re: RoutineExercise): Promise<void> {
+  await appendRow(SHEET_NAMES.ROUTINE_EXERCISES, [
+    re.routine_id,
+    re.exercise_id,
+    re.sets,
+    re.reps,
+  ]);
+}
+
+export async function updateRoutineExercise(
+  routineId: string,
+  exerciseId: string,
+  sets: number,
+  reps: number
+): Promise<void> {
+  const rows = await readSheet(SHEET_NAMES.ROUTINE_EXERCISES);
+  const rowIndex = rows.findIndex((r) => r[0] === routineId && r[1] === exerciseId);
+  if (rowIndex === -1) throw new Error(`RoutineExercise not found`);
+
+  await updateRow(SHEET_NAMES.ROUTINE_EXERCISES, rowIndex + 2, [
+    routineId,
+    exerciseId,
+    sets,
+    reps,
+  ]);
+}
+
+export async function deleteRoutineExercise(
+  routineId: string,
+  exerciseId: string
+): Promise<void> {
+  const rows = await readSheet(SHEET_NAMES.ROUTINE_EXERCISES);
+  const rowIndex = rows.findIndex((r) => r[0] === routineId && r[1] === exerciseId);
+  if (rowIndex === -1) throw new Error(`RoutineExercise not found`);
+  await deleteRow(SHEET_NAMES.ROUTINE_EXERCISES, rowIndex + 2);
+}
+
 /**
- * Appends a new workout log entry to the Logs tab.
- * The `id` is generated as a timestamp-based string if not provided.
+ * Deletes all Routine_Exercises rows for a given routine (used when deleting a routine).
+ * Processes rows in reverse order so indices don't shift.
  */
+export async function deleteAllRoutineExercisesForRoutine(routineId: string): Promise<void> {
+  const rows = await readSheet(SHEET_NAMES.ROUTINE_EXERCISES);
+  const indices: number[] = [];
+  rows.forEach((r, i) => {
+    if (r[0] === routineId) indices.push(i + 2); // 1-indexed with header
+  });
+
+  // Delete in reverse to preserve row indices
+  for (const idx of indices.reverse()) {
+    await deleteRow(SHEET_NAMES.ROUTINE_EXERCISES, idx);
+  }
+}
+
+// ─── Logs ─────────────────────────────────────────────────────────────────
+
 export async function appendLog(
   log: Omit<Log, 'id'> & { id?: string }
 ): Promise<void> {
@@ -175,10 +361,6 @@ export async function appendLog(
 
 // ─── Connection test ───────────────────────────────────────────────────────
 
-/**
- * Verifies connectivity to the spreadsheet.
- * Call this on app launch to surface auth/config errors early.
- */
 export async function testConnection(): Promise<void> {
   try {
     const { spreadsheetId } = getConfig();
