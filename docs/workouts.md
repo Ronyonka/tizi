@@ -190,7 +190,7 @@ All routes are defined as Expo API Route files (`+api.ts`) and run server-side.
 
 ### `GET /api/routines`
 
-Returns all routines from the `Routines` tab.
+Returns all routines from the `routines` collection.
 
 **Response** `200`
 ```json
@@ -203,7 +203,7 @@ Returns all routines from the `Routines` tab.
 
 ### `POST /api/routines`
 
-Creates a new routine and appends it to the `Routines` tab.
+Creates a new routine and appends it to the `routines` collection.
 
 **Body**
 ```json
@@ -246,7 +246,7 @@ Deletes a routine **and all its `Routine_Exercises` rows** (cascade delete).
 
 ### `GET /api/exercises`
 
-Returns all exercises from the `Exercises` tab.
+Returns all exercises from the `exercises` collection.
 
 **Response** `200`
 ```json

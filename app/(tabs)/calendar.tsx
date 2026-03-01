@@ -10,7 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
-import { Log, Routine } from '@/services/googleSheets';
+import { Log, Routine } from '@/services/firestore';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 

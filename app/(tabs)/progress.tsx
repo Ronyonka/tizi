@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
-import { Exercise, Log } from '@/services/googleSheets';
+import { Exercise, Log } from '@/services/firestore';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 

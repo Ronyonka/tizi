@@ -40,14 +40,12 @@ app/
     csv-upload+api.ts      # POST /api/csv-upload
     logs+api.ts            # GET /api/logs, POST /api/logs
     progress+api.ts        # GET /api/progress (exercises + logs combined)
-    test-sheets+api.ts     # GET /api/test-sheets (connection health check)
+  api/test-sheets+api.ts   # GET /api/test-sheets (connection health check)
 
 config/
-  googleSheets.ts          # Sheet tab names, column definitions, env validation (legacy)
   firebase.ts              # Firestore collection name constants
 
 services/
-  googleSheets.ts          # Legacy Google Sheets service
   firebase.ts              # Firebase app init + Firestore export (`db`)
   firestore.ts             # Primary Firestore data-access layer
 
@@ -63,15 +61,15 @@ constants/
 - Greeting with user's name and avatar initial
 - "Today's Workout" logger (sets, weight, reps tracking)
 - Upcoming schedule list for the next 3 days
-- Saves session logs directly to Google Sheets
+- Saves session logs directly to Firestore
 
 ### Workouts (`/workouts`)
-The core feature. Routines are fetched from Google Sheets and displayed grouped by day of the week.
+The core feature. Routines are fetched from Firestore and displayed grouped by day of the week.
 
 - Add / edit / delete routines (name + day)
 - Add exercises from the library or create new ones (name + muscle group + sets/reps)
 - Edit sets × reps inline; remove exercises from routines
-- CSV bulk import to populate Sheets in one go
+- CSV bulk import to populate Firestore in one go
 - Manual sync / refresh button; error banner with retry
 
 📖 **[Full Workouts screen docs → docs/workouts.md](docs/workouts.md)**
@@ -117,7 +115,7 @@ All tokens live in `constants/theme.ts`.
 
 ## Database — Firebase Firestore
 
-> **Note**: Tizi has migrated to Firestore. See [docs/googlesheets.md](docs/googlesheets.md) for the legacy setup documentation.
+> **Note**: Tizi has migrated to Firestore.
 
 ---
 
@@ -134,7 +132,7 @@ All routes are Expo API Routes (`+api.ts` files) running server-side.
 | `POST` | `/api/csv-upload` | Bulk import from CSV |
 | `GET/POST` | `/api/logs` | Fetch history / save workout logs |
 | `GET` | `/api/progress` | Exercises + logs combined (used by Progress screen) |
-| `GET` | `/api/test-sheets` | Sheets connection health check |
+| `GET` | `/api/test-sheets` | Firestore connection health check |
 
 📖 **[Full API reference → docs/workouts.md#api-routes](docs/workouts.md#api-routes)**
 
