@@ -8,24 +8,25 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    FlatList,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -48,8 +49,8 @@ interface Routine {
 interface RoutineExercise {
   routine_id: string;
   exercise_id: string;
-  sets: number;
-  reps: number;
+  sets: string;
+  reps: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -86,13 +87,37 @@ function getMuscleColor(group: string): string {
 
 // ─── API helpers ────────────────────────────────────────────────────────────
 
-const API_BASE = '';  // Expo API routes are relative
+/**
+ * In React Native, `fetch` has no implicit base URL, so relative paths like
+ * `/api/routines` don't work. We derive the dev-server host from expo-constants
+ * so the app knows where to send API requests on both simulators and real devices.
+ * On web (where window exists) relative paths work fine.
+ *
+ * SDK 54: the runtime host is in Constants.expoGoConfig.debuggerHost ("ip:port"),
+ * not in Constants.expoConfig which only holds static app.json values.
+ */
+function getBaseUrl(): string {
+  if (typeof window !== 'undefined') return ''; // web — relative URLs work
+  // expoGoConfig.debuggerHost = "192.168.x.x:19000" in Expo Go
+  const debuggerHost =
+    Constants.expoGoConfig?.debuggerHost ??
+    (Constants.manifest as { debuggerHost?: string } | null)?.debuggerHost;
+  const host = debuggerHost?.split(':')[0] ?? 'localhost';
+  return `http://${host}:8081`;
+}
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${getBaseUrl()}${path}`, {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });
+
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    const text = await res.text();
+    throw new Error(`API returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+  }
+
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? 'API error');
   return data as T;
@@ -307,11 +332,9 @@ export default function WorkoutsScreen() {
     }
     setExerciseLoading(true);
     try {
-      const sets = parseInt(exSets, 10) || 3;
-      const reps = parseInt(exReps, 10) || 10;
       const re = await apiFetch<RoutineExercise>('/api/routine-exercises', {
         method: 'POST',
-        body: JSON.stringify({ routine_id: targetRoutineId, exercise_id: exercise.id, sets, reps }),
+        body: JSON.stringify({ routine_id: targetRoutineId, exercise_id: exercise.id, sets: exSets, reps: exReps }),
       });
       setRoutineExercises((prev) => [...prev, re]);
       setShowExerciseModal(false);
@@ -338,11 +361,9 @@ export default function WorkoutsScreen() {
       setExercises((prev) => [...prev, newEx]);
 
       // Then link to routine
-      const sets = parseInt(exSets, 10) || 3;
-      const reps = parseInt(exReps, 10) || 10;
       const re = await apiFetch<RoutineExercise>('/api/routine-exercises', {
         method: 'POST',
-        body: JSON.stringify({ routine_id: targetRoutineId, exercise_id: newEx.id, sets, reps }),
+        body: JSON.stringify({ routine_id: targetRoutineId, exercise_id: newEx.id, sets: exSets, reps: exReps }),
       });
       setRoutineExercises((prev) => [...prev, re]);
       setShowExerciseModal(false);
@@ -365,21 +386,19 @@ export default function WorkoutsScreen() {
     if (!editingRE) return;
     setEditSetsLoading(true);
     try {
-      const sets = parseInt(editSets, 10) || 1;
-      const reps = parseInt(editReps, 10) || 1;
       await apiFetch('/api/routine-exercises', {
         method: 'PATCH',
         body: JSON.stringify({
           routine_id: editingRE.routine_id,
           exercise_id: editingRE.exercise_id,
-          sets,
-          reps,
+          sets: editSets,
+          reps: editReps,
         }),
       });
       setRoutineExercises((prev) =>
         prev.map((re) =>
           re.routine_id === editingRE.routine_id && re.exercise_id === editingRE.exercise_id
-            ? { ...re, sets, reps }
+            ? { ...re, sets: editSets, reps: editReps }
             : re
         )
       );

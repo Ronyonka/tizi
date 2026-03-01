@@ -1,35 +1,130 @@
-import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
+import { Exercise, Log } from '@/services/googleSheets';
 
 const TIME_RANGES = ['1W', '1M', '3M', '6M', '1Y', 'All'];
 
-const STATS = [
-  { label: 'Total Volume', value: '142k', unit: 'kg', change: '+8.3%', up: true },
-  { label: 'Total Workouts', value: '48', unit: 'sessions', change: '+12%', up: true },
-  { label: 'Avg Duration', value: '58', unit: 'min', change: '-4 min', up: false },
-  { label: 'Best Streak', value: '14', unit: 'days', change: '+2', up: true },
-];
+interface PR {
+  exercise: string;
+  weight: string;
+  date: string;
+}
 
-const PRS = [
-  { exercise: 'Bench Press', weight: '102.5 kg', date: 'Feb 20' },
-  { exercise: 'Deadlift', weight: '180 kg', date: 'Feb 18' },
-  { exercise: 'Squat', weight: '150 kg', date: 'Jan 30' },
-  { exercise: 'OHP', weight: '72.5 kg', date: 'Jan 15' },
-];
-
-const BODY_STATS = [
-  { label: 'Body Weight', values: [82, 81.5, 81, 80.5, 80, 79.8, 79.5] },
-];
-
-// Simple bar chart data (relative values 0–100)
-const VOLUME_BARS = [60, 80, 45, 90, 75, 50, 100];
-const WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+interface Stat {
+  label: string;
+  value: string;
+  unit: string;
+  change?: string;
+  up?: boolean;
+}
 
 export default function ProgressScreen() {
   const [activeRange, setActiveRange] = useState('1M');
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<Stat[]>([]);
+  const [prs, setPrs] = useState<PR[]>([]);
+  const [volumeBars, setVolumeBars] = useState<number[]>([]);
+  const [weekLabels, setWeekLabels] = useState<string[]>([]);
+
+  useEffect(() => {
+    calculateProgress();
+  }, [activeRange]);
+
+  const calculateProgress = async () => {
+    try {
+      setLoading(true);
+      const [logsRes, exercisesRes] = await Promise.all([
+        fetch('/api/logs'),
+        fetch('/api/exercises'),
+      ]);
+
+      const rawLogs: Log[] = await logsRes.json();
+      const allExercises: Exercise[] = await exercisesRes.json();
+
+      // 1. Total Volume
+      const totalVolume = rawLogs.reduce((acc, l) => acc + (l.weight_kg * (parseInt(l.reps) || 0)), 0);
+      
+      // 2. Total Workouts
+      const uniqueDates = new Set(rawLogs.map(l => l.date.split(' ')[0]));
+      const totalWorkouts = uniqueDates.size;
+
+      // 3. PRs
+      const prMap: Record<string, { weight: number, date: string }> = {};
+      rawLogs.forEach(log => {
+        if (!prMap[log.exercise_id] || log.weight_kg > prMap[log.exercise_id].weight) {
+          prMap[log.exercise_id] = { weight: log.weight_kg, date: log.date.split(' ')[0] };
+        }
+      });
+
+      const processedPrs: PR[] = Object.entries(prMap).map(([exId, data]) => {
+        const ex = allExercises.find(e => e.id === exId);
+        return {
+          exercise: ex?.name || 'Unknown',
+          weight: `${data.weight} kg`,
+          date: data.date
+        };
+      }).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
+
+      setPrs(processedPrs);
+
+      // 4. Streak (simplified)
+      const sortedDates = Array.from(uniqueDates).sort().reverse();
+      let streak = 0;
+      if (sortedDates.length > 0) {
+        // Just counting total for now as a placeholder for real streak logic
+        streak = sortedDates.length; 
+      }
+
+      setStats([
+        { label: 'Total Volume', value: totalVolume > 1000 ? `${(totalVolume / 1000).toFixed(1)}k` : `${totalVolume}`, unit: 'kg' },
+        { label: 'Total Workouts', value: `${totalWorkouts}`, unit: 'sessions' },
+        { label: 'Exercises done', value: `${allExercises.length}`, unit: 'types' },
+        { label: 'Training Days', value: `${streak}`, unit: 'days' },
+      ]);
+
+      // 5. Weekly Volume for Chart
+      const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      const volumeData = Array(7).fill(0);
+      
+      const now = new Date();
+      const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - dayOfWeek);
+      monday.setHours(0,0,0,0);
+
+      rawLogs.forEach(l => {
+        const parts = l.date.split(' ')[0].split('/');
+        const lDate = parts.length === 3 
+          ? new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]))
+          : new Date(l.date.split(' ')[0]);
+        
+        if (lDate >= monday) {
+          const d = lDate.getDay() === 0 ? 6 : lDate.getDay() - 1;
+          volumeData[d] += l.weight_kg * (parseInt(l.reps) || 0);
+        }
+      });
+
+      const maxVolume = Math.max(...volumeData, 1);
+      setVolumeBars(volumeData.map(v => (v / maxVolume) * 100));
+      setWeekLabels(labels);
+
+    } catch (error) {
+      console.error('Error calculating progress:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -58,32 +153,34 @@ export default function ProgressScreen() {
 
         {/* Stats Grid */}
         <View style={styles.statsGrid}>
-          {STATS.map((s) => (
+          {stats.map((s) => (
             <View key={s.label} style={styles.statCard}>
               <Text style={styles.statLabel}>{s.label.toUpperCase()}</Text>
               <View style={styles.statValueRow}>
                 <Text style={styles.statValue}>{s.value}</Text>
                 <Text style={styles.statUnit}>{s.unit}</Text>
               </View>
-              <View style={styles.statChangeRow}>
-                <Text style={[styles.statChange, { color: s.up ? Colors.success : Colors.secondary }]}>
-                  {s.up ? '↑' : '↓'} {s.change}
-                </Text>
-              </View>
+              {s.change && (
+                <View style={styles.statChangeRow}>
+                  <Text style={[styles.statChange, { color: s.up ? Colors.success : Colors.secondary }]}>
+                    {s.up ? '↑' : '↓'} {s.change}
+                  </Text>
+                </View>
+              )}
             </View>
           ))}
         </View>
 
         {/* Volume Chart */}
         <View style={styles.chartCard}>
-          <Text style={styles.cardLabel}>WEEKLY VOLUME</Text>
+          <Text style={styles.cardLabel}>WEEKLY VOLUME (THIS WEEK)</Text>
           <View style={styles.barChart}>
-            {VOLUME_BARS.map((v, i) => (
+            {volumeBars.map((v, i) => (
               <View key={i} style={styles.barGroup}>
                 <View style={styles.barTrack}>
                   <View style={[styles.bar, { height: `${v}%` }]} />
                 </View>
-                <Text style={styles.barLabel}>{WEEK_LABELS[i]}</Text>
+                <Text style={styles.barLabel}>{weekLabels[i]}</Text>
               </View>
             ))}
           </View>
@@ -91,18 +188,24 @@ export default function ProgressScreen() {
 
         {/* PRs */}
         <Text style={styles.sectionTitle}>PERSONAL RECORDS</Text>
-        {PRS.map((pr, i) => (
-          <View key={i} style={styles.prCard}>
-            <View>
-              <Text style={styles.prExercise}>{pr.exercise}</Text>
-              <Text style={styles.prDate}>{pr.date}</Text>
-            </View>
-            <View style={styles.prWeightContainer}>
-              <Text style={styles.prWeight}>{pr.weight}</Text>
-              <Text style={styles.prTrophy}>🏆</Text>
-            </View>
+        {prs.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyText}>No records yet. Keep pushing! 🏆</Text>
           </View>
-        ))}
+        ) : (
+          prs.map((pr, i) => (
+            <View key={i} style={styles.prCard}>
+              <View>
+                <Text style={styles.prExercise}>{pr.exercise}</Text>
+                <Text style={styles.prDate}>{pr.date}</Text>
+              </View>
+              <View style={styles.prWeightContainer}>
+                <Text style={styles.prWeight}>{pr.weight}</Text>
+                <Text style={styles.prTrophy}>🏆</Text>
+              </View>
+            </View>
+          ))
+        )}
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
     </SafeAreaView>
@@ -113,6 +216,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   container: { flex: 1 },
   content: { padding: Spacing.md },
+  loadingContainer: { flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' },
 
   pageTitle: {
     fontSize: Typography.xxl,
@@ -224,4 +328,19 @@ const styles = StyleSheet.create({
   prWeightContainer: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   prWeight: { fontSize: Typography.lg, color: Colors.primary, fontWeight: Typography.black },
   prTrophy: { fontSize: Typography.md },
+
+  emptyCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.md,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+  },
+  emptyText: {
+    fontSize: Typography.md,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
 });

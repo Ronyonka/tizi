@@ -1,25 +1,212 @@
-import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
+import { Exercise, Log, Routine, RoutineExercise } from '@/services/googleSheets';
 
-const GREETING = 'Good morning';
 const USERNAME = 'Ron';
 
-const QUICK_STATS = [
-  { label: 'Streak', value: '12', unit: 'days' },
-  { label: 'Volume', value: '4.2', unit: 'k kg' },
-  { label: 'PRs', value: '3', unit: 'this week' },
-];
+interface ExerciseWithTarget extends Exercise, RoutineExercise {}
 
-const UPCOMING = [
-  { day: 'Today', name: 'Push Day A', tags: ['Chest', 'Shoulders', 'Triceps'] },
-  { day: 'Tomorrow', name: 'Rest / Active Recovery', tags: ['Mobility', 'Stretch'] },
-  { day: 'Wed', name: 'Pull Day A', tags: ['Back', 'Biceps'] },
-];
+interface SetLog {
+  weight: string;
+  reps: string;
+}
+
+interface UpcomingWorkout {
+  day: string;
+  name: string;
+  tags: string[];
+}
 
 export default function HomeScreen() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [todayRoutine, setTodayRoutine] = useState<Routine | null>(null);
+  const [exercises, setExercises] = useState<ExerciseWithTarget[]>([]);
+  const [upcoming, setUpcoming] = useState<UpcomingWorkout[]>([]);
+  const [logs, setLogs] = useState<Record<string, SetLog[]>>({});
+
+  useEffect(() => {
+    fetchHomeData();
+  }, []);
+
+  const fetchHomeData = async () => {
+    try {
+      setLoading(true);
+      const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const now = new Date();
+      const todayDay = daysOfWeek[now.getDay()];
+
+      // Get names of upcoming 3 days
+      const upcomingDayNames: string[] = [];
+      for (let i = 1; i <= 3; i++) {
+        const nextDate = new Date();
+        nextDate.setDate(now.getDate() + i);
+        upcomingDayNames.push(daysOfWeek[nextDate.getDay()]);
+      }
+
+      // Fetch routines, routine-exercises and exercises in parallel
+      const [routinesRes, allReRes, allExRes] = await Promise.all([
+        fetch('/api/routines'),
+        fetch('/api/routine-exercises'),
+        fetch('/api/exercises'),
+      ]);
+
+      if (!routinesRes.ok || !allReRes.ok || !allExRes.ok) {
+          throw new Error('Failed to fetch data from API');
+      }
+
+      const allRoutines: Routine[] = await routinesRes.json();
+      const allRoutineExercises: RoutineExercise[] = await allReRes.json();
+      const allExercises: Exercise[] = await allExRes.json();
+
+      // 1. Process Today
+      const routine = allRoutines.find((r) => r.day_of_week === todayDay);
+      if (routine) {
+        setTodayRoutine(routine);
+        const routineExp = allRoutineExercises.filter(re => re.routine_id === routine.id);
+        const joined: ExerciseWithTarget[] = routineExp.map((re) => {
+          const ex = allExercises.find((e) => e.id === re.exercise_id);
+          return { ...ex!, ...re };
+        });
+        setExercises(joined);
+
+        // Initialize logs state
+        const initialLogs: Record<string, SetLog[]> = {};
+        joined.forEach((ex) => {
+          const numSets = parseInt(ex.sets) || 3;
+          initialLogs[ex.id] = Array(numSets).fill({ weight: '', reps: '' });
+        });
+        setLogs(initialLogs);
+      } else {
+        setTodayRoutine(null);
+      }
+
+      // 2. Process Upcoming
+      const upcomingData: UpcomingWorkout[] = upcomingDayNames.map((dayName, idx) => {
+        const r = allRoutines.find(routine => routine.day_of_week === dayName);
+        const dayLabel = idx === 0 ? 'Tomorrow' : dayName.slice(0, 3);
+        
+        if (!r) {
+          return { day: dayLabel, name: 'Rest Day', tags: ['Recovery'] };
+        }
+
+        const reList = allRoutineExercises.filter(re => re.routine_id === r.id);
+        const muscleGroups = new Set<string>();
+        reList.forEach(re => {
+          const ex = allExercises.find(e => e.id === re.exercise_id);
+          if (ex?.muscle_group) muscleGroups.add(ex.muscle_group);
+        });
+
+        return {
+          day: dayLabel,
+          name: r.name,
+          tags: Array.from(muscleGroups)
+        };
+      });
+
+      setUpcoming(upcomingData);
+
+    } catch (error) {
+      console.error('Error fetching home data:', error);
+      Alert.alert('Error', 'Failed to load home data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogChange = (exerciseId: string, setIndex: number, field: keyof SetLog, value: string) => {
+    setLogs((prev) => ({
+      ...prev,
+      [exerciseId]: prev[exerciseId].map((set, i) =>
+        i === setIndex ? { ...set, [field]: value } : set
+      ),
+    }));
+  };
+
+  const addSet = (exerciseId: string) => {
+    setLogs((prev) => ({
+      ...prev,
+      [exerciseId]: [...prev[exerciseId], { weight: '', reps: '' }],
+    }));
+  };
+
+  const removeSet = (exerciseId: string, setIndex: number) => {
+    setLogs((prev) => ({
+      ...prev,
+      [exerciseId]: prev[exerciseId].filter((_, i) => i !== setIndex),
+    }));
+  };
+
+  const completeWorkout = async () => {
+    if (!todayRoutine) return;
+
+    try {
+      setSaving(true);
+      const workoutLogs: Omit<Log, 'id'>[] = [];
+      const timestamp = new Date().toISOString();
+      const dateStr = new Date().toLocaleDateString();
+
+      Object.entries(logs).forEach(([exerciseId, sets]) => {
+        sets.forEach((set, idx) => {
+          if (set.weight || set.reps) {
+            workoutLogs.push({
+              date: `${dateStr} ${new Date().toLocaleTimeString()}`,
+              routine_id: todayRoutine.id,
+              exercise_id: exerciseId,
+              sets: String(idx + 1),
+              reps: set.reps || '0',
+              weight_kg: parseFloat(set.weight) || 0,
+            });
+          }
+        });
+      });
+
+      if (workoutLogs.length === 0) {
+        Alert.alert('Empty Workout', 'Please log at least one set before completing.');
+        setSaving(false);
+        return;
+      }
+
+      const res = await fetch('/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logs: workoutLogs }),
+      });
+
+      if (res.ok) {
+        Alert.alert('Success', 'Workout logged successfully! Great job 👊');
+      } else {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to save logs');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save workout logs';
+      Alert.alert('Error', message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -30,39 +217,100 @@ export default function HomeScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.greeting}>{GREETING},</Text>
+            <Text style={styles.greeting}>Good morning,</Text>
             <Text style={styles.username}>{USERNAME} 👊</Text>
           </View>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>R</Text>
+            <Text style={styles.avatarText}>{USERNAME[0]}</Text>
           </View>
         </View>
 
-        {/* Today's Banner */}
-        <View style={styles.banner}>
-          <Text style={styles.bannerLabel}>TODAY'S WORKOUT</Text>
-          <Text style={styles.bannerTitle}>Push Day A</Text>
-          <Text style={styles.bannerSub}>Chest · Shoulders · Triceps</Text>
-          <View style={styles.startBtn}>
-            <Text style={styles.startBtnText}>Start Workout →</Text>
+        {!todayRoutine ? (
+          <View style={styles.restDayCard}>
+            <Text style={styles.restDayTitle}>It's Rest Day! 🧘‍♂️</Text>
+            <Text style={styles.restDaySub}>
+              Recovery is where the growth happens. Take it easy today or do some light mobility work.
+            </Text>
           </View>
-        </View>
-
-        {/* Quick Stats */}
-        <View style={styles.statsRow}>
-          {QUICK_STATS.map((s) => (
-            <View key={s.label} style={styles.statCard}>
-              <Text style={styles.statValue}>{s.value}</Text>
-              <Text style={styles.statUnit}>{s.unit}</Text>
-              <Text style={styles.statLabel}>{s.label}</Text>
+        ) : (
+          <>
+            {/* Banner */}
+            <View style={styles.banner}>
+              <Text style={styles.bannerLabel}>TODAY'S WORKOUT</Text>
+              <Text style={styles.bannerTitle}>{todayRoutine.name}</Text>
+              <Text style={styles.bannerSub}>{new Date().toLocaleDateString('en-US', { weekday: 'long' })}</Text>
             </View>
-          ))}
-        </View>
+
+            {/* Exercises */}
+            <Text style={styles.sectionTitle}>EXERCISES</Text>
+            {exercises.map((ex) => (
+              <View key={ex.id} style={styles.exerciseCard}>
+                <View style={styles.exerciseHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.exerciseName}>{ex.name}</Text>
+                    <Text style={styles.exerciseTarget}>Target: {ex.sets} sets × {ex.reps} reps</Text>
+                  </View>
+                  <Text style={styles.exerciseMuscle}>{ex.muscle_group}</Text>
+                </View>
+
+                {/* Sets Header */}
+                <View style={styles.setsHeader}>
+                  <Text style={[styles.setHeaderText, { width: 40 }]}>Set</Text>
+                  <Text style={[styles.setHeaderText, { flex: 1 }]}>Weight (KG)</Text>
+                  <Text style={[styles.setHeaderText, { flex: 1 }]}>Reps</Text>
+                  <View style={{ width: 30 }} />
+                </View>
+
+                {/* Logs */}
+                {logs[ex.id]?.map((set, idx) => (
+                  <View key={idx} style={styles.setRow}>
+                    <Text style={styles.setNumber}>{idx + 1}</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="0"
+                      placeholderTextColor={Colors.textMuted}
+                      keyboardType="numeric"
+                      value={set.weight}
+                      onChangeText={(val) => handleLogChange(ex.id, idx, 'weight', val)}
+                    />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="0"
+                      placeholderTextColor={Colors.textMuted}
+                      keyboardType="numeric"
+                      value={set.reps}
+                      onChangeText={(val) => handleLogChange(ex.id, idx, 'reps', val)}
+                    />
+                    <TouchableOpacity onPress={() => removeSet(ex.id, idx)} style={styles.removeSetBtn}>
+                      <Text style={styles.removeSetText}>×</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+
+                <TouchableOpacity onPress={() => addSet(ex.id)} style={styles.addSetBtn}>
+                  <Text style={styles.addSetBtnText}>+ Add Set</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            <TouchableOpacity
+              style={[styles.completeBtn, saving && styles.disabledBtn]}
+              onPress={completeWorkout}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color={Colors.background} />
+              ) : (
+                <Text style={styles.completeBtnText}>Complete Workout</Text>
+              )}
+            </TouchableOpacity>
+          </>
+        )}
 
         {/* Upcoming */}
-        <Text style={styles.sectionTitle}>UPCOMING</Text>
-        {UPCOMING.map((item) => (
-          <View key={item.day} style={styles.scheduleCard}>
+        <Text style={[styles.sectionTitle, { marginTop: Spacing.md }]}>UPCOMING</Text>
+        {upcoming.map((item, i) => (
+          <View key={i} style={styles.scheduleCard}>
             <Text style={styles.scheduleDay}>{item.day}</Text>
             <View style={styles.scheduleInfo}>
               <Text style={styles.scheduleName}>{item.name}</Text>
@@ -85,6 +333,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   container: { flex: 1 },
   content: { padding: Spacing.md, paddingBottom: Spacing.xxl },
+  loadingContainer: { flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' },
 
   header: {
     flexDirection: 'row',
@@ -142,49 +391,30 @@ const styles = StyleSheet.create({
     fontSize: Typography.sm,
     color: Colors.textSecondary,
     marginTop: 2,
-    marginBottom: Spacing.md,
-  },
-  startBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: Radii.md,
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    alignSelf: 'flex-start',
-  },
-  startBtnText: {
-    color: Colors.background,
-    fontWeight: Typography.bold,
-    fontSize: Typography.md,
   },
 
-  statsRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    marginBottom: Spacing.lg,
-  },
-  statCard: {
-    flex: 1,
+  restDayCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radii.md,
-    padding: Spacing.sm,
+    borderRadius: Radii.lg,
+    padding: Spacing.xl,
     alignItems: 'center',
+    marginTop: Spacing.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+    marginBottom: Spacing.md,
   },
-  statValue: {
-    fontSize: Typography.xxl,
+  restDayTitle: {
+    fontSize: Typography.xl,
     color: Colors.text,
-    fontWeight: Typography.black,
+    fontWeight: Typography.bold,
+    marginBottom: Spacing.sm,
   },
-  statUnit: {
-    fontSize: Typography.xs,
+  restDaySub: {
+    fontSize: Typography.md,
     color: Colors.textSecondary,
-    marginBottom: 2,
-  },
-  statLabel: {
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    fontWeight: Typography.semibold,
-    letterSpacing: Typography.wide,
-    textTransform: 'uppercase',
+    textAlign: 'center',
+    lineHeight: 22,
   },
 
   sectionTitle: {
@@ -194,6 +424,113 @@ const styles = StyleSheet.create({
     letterSpacing: Typography.wider,
     marginBottom: Spacing.sm,
   },
+  exerciseCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  exerciseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  exerciseName: {
+    fontSize: Typography.lg,
+    color: Colors.text,
+    fontWeight: Typography.bold,
+  },
+  exerciseTarget: {
+    fontSize: Typography.sm,
+    color: Colors.primary,
+    marginTop: 2,
+  },
+  exerciseMuscle: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.semibold,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+
+  setsHeader: {
+    flexDirection: 'row',
+    marginBottom: Spacing.xs,
+    paddingHorizontal: Spacing.xs,
+  },
+  setHeaderText: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.bold,
+    textTransform: 'uppercase',
+  },
+  setRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  setNumber: {
+    width: 40,
+    fontSize: Typography.md,
+    color: Colors.textSecondary,
+    fontWeight: Typography.bold,
+    textAlign: 'center',
+  },
+  input: {
+    flex: 1,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: Radii.sm,
+    padding: Spacing.sm,
+    color: Colors.text,
+    fontSize: Typography.md,
+    textAlign: 'center',
+  },
+  removeSetBtn: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeSetText: {
+    color: Colors.secondary,
+    fontSize: Typography.xl,
+    fontWeight: Typography.bold,
+  },
+  addSetBtn: {
+    marginTop: Spacing.xs,
+    paddingVertical: Spacing.sm,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radii.sm,
+    borderStyle: 'dashed',
+  },
+  addSetBtnText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+  },
+
+  completeBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radii.md,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.xl,
+  },
+  disabledBtn: {
+    opacity: 0.7,
+  },
+  completeBtnText: {
+    color: Colors.background,
+    fontSize: Typography.lg,
+    fontWeight: Typography.black,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+
   scheduleCard: {
     flexDirection: 'row',
     backgroundColor: Colors.surface,

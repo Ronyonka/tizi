@@ -28,8 +28,8 @@ export interface Routine {
 export interface RoutineExercise {
   routine_id: string;
   exercise_id: string;
-  sets: number;
-  reps: number;
+  sets: string;
+  reps: string;
 }
 
 export interface Log {
@@ -37,8 +37,8 @@ export interface Log {
   date: string;
   routine_id: string;
   exercise_id: string;
-  sets: number;
-  reps: number;
+  sets: string;
+  reps: string;
   weight_kg: number;
 }
 
@@ -222,8 +222,8 @@ export async function getRoutineExercises(): Promise<RoutineExercise[]> {
   return rows.map(([routine_id, exercise_id, sets, reps]) => ({
     routine_id,
     exercise_id,
-    sets: Number(sets),
-    reps: Number(reps),
+    sets: String(sets),
+    reps: String(reps),
   }));
 }
 
@@ -234,8 +234,8 @@ export async function getLogs(): Promise<Log[]> {
     date,
     routine_id,
     exercise_id,
-    sets: Number(sets),
-    reps: Number(reps),
+    sets: String(sets),
+    reps: String(reps),
     weight_kg: Number(weight_kg),
   }));
 }
@@ -300,8 +300,8 @@ export async function appendRoutineExercise(re: RoutineExercise): Promise<void> 
 export async function updateRoutineExercise(
   routineId: string,
   exerciseId: string,
-  sets: number,
-  reps: number
+  sets: string,
+  reps: string
 ): Promise<void> {
   const rows = await readSheet(SHEET_NAMES.ROUTINE_EXERCISES);
   const rowIndex = rows.findIndex((r) => r[0] === routineId && r[1] === exerciseId);
@@ -357,6 +357,21 @@ export async function appendLog(
     log.reps,
     log.weight_kg,
   ]);
+}
+
+export async function batchAppendLogs(
+  logs: (Omit<Log, 'id'> & { id?: string })[]
+): Promise<void> {
+  const rows = logs.map((log) => [
+    log.id ?? `log_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+    log.date,
+    log.routine_id,
+    log.exercise_id,
+    log.sets,
+    log.reps,
+    log.weight_kg,
+  ]);
+  await batchAppendRows(SHEET_NAMES.LOGS, rows);
 }
 
 // ─── Connection test ───────────────────────────────────────────────────────

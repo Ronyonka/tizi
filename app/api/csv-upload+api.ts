@@ -21,8 +21,8 @@ interface CsvRow {
   day_of_week: string;
   exercise_name: string;
   muscle_group: string;
-  sets: number;
-  reps: number;
+  sets: string;
+  reps: string;
 }
 
 function parseCSV(raw: string): CsvRow[] {
@@ -57,8 +57,8 @@ function parseCSV(raw: string): CsvRow[] {
       day_of_week: cells[idx.day_of_week] ?? '',
       exercise_name: cells[idx.exercise_name] ?? '',
       muscle_group: cells[idx.muscle_group] ?? '',
-      sets: Number(cells[idx.sets] ?? 3),
-      reps: Number(cells[idx.reps] ?? 10),
+      sets: cells[idx.sets] ?? '3',
+      reps: cells[idx.reps] ?? '10',
     };
   }).filter((r) => r.routine_name && r.exercise_name);
 }
