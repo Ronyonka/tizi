@@ -7,9 +7,10 @@
 
 import { testConnection } from '@/services/googleSheets';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    await testConnection();
+    const spreadsheetId = request.headers.get('x-spreadsheet-id') || undefined;
+    await testConnection(spreadsheetId);
     return Response.json({ success: true, message: 'Connection to Google Sheets successful' });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

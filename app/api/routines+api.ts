@@ -9,9 +9,10 @@ import {
     getRoutines,
 } from '@/services/googleSheets';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const routines = await getRoutines();
+    const spreadsheetId = request.headers.get('x-spreadsheet-id') || undefined;
+    const routines = await getRoutines(spreadsheetId);
     return Response.json(routines);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

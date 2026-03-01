@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
+import { NotificationService } from '@/services/notifications';
+import { Storage } from '@/services/storage';
 
 const PROFILE = {
   name: 'Ron',
@@ -25,11 +28,13 @@ function SettingsRow({
   value,
   onPress,
   last = false,
+  showChevron = true,
 }: {
   label: string;
   value?: string;
   onPress?: () => void;
   last?: boolean;
+  showChevron?: boolean;
 }) {
   return (
     <TouchableOpacity
@@ -40,7 +45,7 @@ function SettingsRow({
       <Text style={styles.rowLabel}>{label}</Text>
       <View style={styles.rowRight}>
         {value ? <Text style={styles.rowValue}>{value}</Text> : null}
-        {onPress ? <Text style={styles.rowChevron}>›</Text> : null}
+        {onPress && showChevron ? <Text style={styles.rowChevron}>›</Text> : null}
       </View>
     </TouchableOpacity>
   );
@@ -54,7 +59,7 @@ function ToggleRow({
 }: {
   label: string;
   value: boolean;
-  onToggle: () => void;
+  onToggle: (v: boolean) => void;
   last?: boolean;
 }) {
   return (
@@ -73,9 +78,99 @@ function ToggleRow({
 
 export default function SettingsScreen() {
   const [notifications, setNotifications] = useState(true);
-  const [reminders, setReminders] = useState(true);
-  const [haptics, setHaptics] = useState(true);
-  const [metric, setMetric] = useState(true);
+  const [reminderTime, setReminderTime] = useState('08:00');
+  const [spreadsheetId, setSpreadsheetId] = useState('');
+  const [isTesting, setIsTesting] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    const enabled = await Storage.getNotificationsEnabled();
+    const time = await Storage.getReminderTime();
+    const sid = await Storage.getSpreadsheetId();
+    setNotifications(enabled);
+    setReminderTime(time);
+    setSpreadsheetId(sid || '');
+  };
+
+  const syncNotifications = async (enabled: boolean, time: string) => {
+    if (!enabled) {
+      await NotificationService.cancelAll();
+      return;
+    }
+
+    const hasPermission = await NotificationService.requestPermissions();
+    if (!hasPermission) {
+      Alert.alert('Permission Denied', 'Please enable notifications in your phone settings.');
+      setNotifications(false);
+      await Storage.setNotificationsEnabled(false);
+      return;
+    }
+
+    try {
+      // Fetch routines to schedule (using current spreadsheetId if any)
+      const res = await fetch('/api/routines', {
+        headers: spreadsheetId ? { 'x-spreadsheet-id': spreadsheetId } : {},
+      });
+      const routines = await res.json();
+      
+      if (Array.isArray(routines)) {
+        await NotificationService.scheduleWorkoutReminder(time, routines);
+      }
+    } catch (error) {
+      console.error('Failed to sync notifications:', error);
+    }
+  };
+
+  const handleToggleNotifications = async (value: boolean) => {
+    setNotifications(value);
+    await Storage.setNotificationsEnabled(value);
+    await syncNotifications(value, reminderTime);
+  };
+
+  const handleTimeChange = (_event: DateTimePickerEvent, date?: Date) => {
+    setShowTimePicker(false);
+    if (date) {
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      const timeString = `${hours}:${minutes}`;
+      setReminderTime(timeString);
+      Storage.setReminderTime(timeString);
+      syncNotifications(notifications, timeString);
+    }
+  };
+
+  const handleSpreadsheetIdChange = (text: string) => {
+    const cleanId = text.trim();
+    setSpreadsheetId(cleanId);
+    Storage.setSpreadsheetId(cleanId || null);
+  };
+
+  const testConnection = async () => {
+    setIsTesting(true);
+    try {
+      const res = await fetch('/api/test-sheets', {
+        headers: spreadsheetId ? { 'x-spreadsheet-id': spreadsheetId } : {},
+      });
+      const data = await res.json();
+      if (data.success) {
+        Alert.alert('Success', 'Connection to Google Sheets successful!');
+      } else {
+        Alert.alert('Failed', data.message || 'Could not connect to Google Sheets.');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'An error occurred while testing connection.');
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const pickerDate = new Date();
+  const [hStr, mStr] = reminderTime.split(':');
+  pickerDate.setHours(parseInt(hStr, 10), parseInt(mStr, 10));
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -95,57 +190,65 @@ export default function SettingsScreen() {
             <Text style={styles.profileName}>{PROFILE.name}</Text>
             <Text style={styles.profileEmail}>{PROFILE.email}</Text>
           </View>
-          <TouchableOpacity style={styles.editBtn}>
-            <Text style={styles.editBtnText}>Edit</Text>
-          </TouchableOpacity>
         </View>
 
-        <SettingsSection title="TRAINING">
-          <SettingsRow label="Current Plan" value={PROFILE.plan} onPress={() => {}} />
-          <SettingsRow label="Goal" value={PROFILE.goal} onPress={() => {}} />
-          <SettingsRow label="Rest Timer" value="90 sec" onPress={() => {}} last />
-        </SettingsSection>
-
-        <SettingsSection title="PREFERENCES">
+        <SettingsSection title="NOTIFICATIONS">
           <ToggleRow
-            label="Push Notifications"
+            label="Daily Reminders"
             value={notifications}
-            onToggle={() => setNotifications((v) => !v)}
+            onToggle={handleToggleNotifications}
           />
-          <ToggleRow
-            label="Workout Reminders"
-            value={reminders}
-            onToggle={() => setReminders((v) => !v)}
+          <SettingsRow 
+            label="Reminder Time" 
+            value={reminderTime} 
+            onPress={() => setShowTimePicker(true)}
+            last 
           />
-          <ToggleRow
-            label="Haptic Feedback"
-            value={haptics}
-            onToggle={() => setHaptics((v) => !v)}
-          />
-          <ToggleRow
-            label="Use Metric (kg)"
-            value={metric}
-            onToggle={() => setMetric((v) => !v)}
-            last
-          />
+          {showTimePicker && (
+            <DateTimePicker
+              value={pickerDate}
+              mode="time"
+              is24Hour={true}
+              onChange={handleTimeChange}
+            />
+          )}
         </SettingsSection>
 
-        <SettingsSection title="DATA">
-          <SettingsRow label="Export Data" onPress={() => {}} />
-          <SettingsRow label="Backup to Cloud" value="On" onPress={() => {}} />
-          <SettingsRow label="Clear All Data" onPress={() => {}} last />
+        <SettingsSection title="GOOGLE SHEETS CONFIG">
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Spreadsheet ID</Text>
+            <TextInput
+              style={styles.input}
+              value={spreadsheetId}
+              onChangeText={handleSpreadsheetIdChange}
+              placeholder="Enter Spreadsheet ID"
+              placeholderTextColor={Colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={styles.inputHint}>
+              Leave empty to use the default system spreadsheet.
+            </Text>
+          </View>
+          
+          <TouchableOpacity 
+            style={styles.testBtn} 
+            onPress={testConnection}
+            disabled={isTesting}
+          >
+            {isTesting ? (
+              <ActivityIndicator color={Colors.background} size="small" />
+            ) : (
+              <Text style={styles.testBtnText}>Test Connection</Text>
+            )}
+          </TouchableOpacity>
         </SettingsSection>
 
         <SettingsSection title="ABOUT">
-          <SettingsRow label="Version" value="1.0.0" />
+          <SettingsRow label="Version" value="1.0.0" showChevron={false} />
           <SettingsRow label="Privacy Policy" onPress={() => {}} />
           <SettingsRow label="Terms of Service" onPress={() => {}} last />
         </SettingsSection>
-
-        {/* Sign Out */}
-        <TouchableOpacity style={styles.signOutBtn}>
-          <Text style={styles.signOutText}>Sign Out</Text>
-        </TouchableOpacity>
 
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
@@ -187,13 +290,6 @@ const styles = StyleSheet.create({
   profileInfo: { flex: 1 },
   profileName: { fontSize: Typography.lg, color: Colors.text, fontWeight: Typography.bold },
   profileEmail: { fontSize: Typography.sm, color: Colors.textSecondary, marginTop: 2 },
-  editBtn: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: Radii.sm,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
-  },
-  editBtnText: { fontSize: Typography.sm, color: Colors.textSecondary, fontWeight: Typography.medium },
 
   section: { marginBottom: Spacing.lg },
   sectionTitle: {
@@ -208,6 +304,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderRadius: Radii.md,
     overflow: 'hidden',
+    paddingBottom: Spacing.xs,
   },
   row: {
     flexDirection: 'row',
@@ -225,17 +322,43 @@ const styles = StyleSheet.create({
   rowValue: { fontSize: Typography.sm, color: Colors.textSecondary },
   rowChevron: { fontSize: Typography.xl, color: Colors.textMuted },
 
-  signOutBtn: {
-    backgroundColor: Colors.surface,
+  inputContainer: {
+    padding: Spacing.md,
+  },
+  inputLabel: {
+    fontSize: Typography.xs,
+    color: Colors.textSecondary,
+    fontWeight: Typography.bold,
+    marginBottom: Spacing.xs,
+  },
+  input: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: Radii.sm,
+    padding: Spacing.md,
+    color: Colors.text,
+    fontSize: Typography.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  inputHint: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: Spacing.xs,
+  },
+
+  testBtn: {
+    backgroundColor: Colors.primary,
     borderRadius: Radii.md,
+    margin: Spacing.md,
+    marginTop: 0,
     padding: Spacing.md,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.secondary,
+    justifyContent: 'center',
+    height: 50,
   },
-  signOutText: {
-    color: Colors.secondary,
-    fontWeight: Typography.semibold,
+  testBtnText: {
+    color: Colors.background,
+    fontWeight: Typography.bold,
     fontSize: Typography.md,
   },
 });

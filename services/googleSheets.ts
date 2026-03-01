@@ -47,8 +47,8 @@ export interface Log {
 /**
  * Builds an authenticated Google Sheets API client using the service account.
  */
-export function getSheetClient() {
-  const { credentials } = getConfig();
+export function getSheetClient(spreadsheetIdOverride?: string) {
+  const { credentials } = getConfig(spreadsheetIdOverride);
 
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -67,9 +67,9 @@ export function getSheetClient() {
  * Reads all rows from a named sheet tab.
  * Returns rows starting from row 2 (header skipped).
  */
-export async function readSheet(tab: SheetName, range?: string): Promise<string[][]> {
-  const { spreadsheetId } = getConfig();
-  const sheets = getSheetClient();
+export async function readSheet(tab: SheetName, range?: string, spreadsheetIdOverride?: string): Promise<string[][]> {
+  const { spreadsheetId } = getConfig(spreadsheetIdOverride);
+  const sheets = getSheetClient(spreadsheetIdOverride);
 
   const fullRange = range ? `${tab}!${range}` : `${tab}!A2:Z`;
 
@@ -84,9 +84,9 @@ export async function readSheet(tab: SheetName, range?: string): Promise<string[
 /**
  * Appends a single row to a named sheet tab.
  */
-export async function appendRow(tab: SheetName, values: (string | number)[]): Promise<void> {
-  const { spreadsheetId } = getConfig();
-  const sheets = getSheetClient();
+export async function appendRow(tab: SheetName, values: (string | number)[], spreadsheetIdOverride?: string): Promise<void> {
+  const { spreadsheetId } = getConfig(spreadsheetIdOverride);
+  const sheets = getSheetClient(spreadsheetIdOverride);
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
@@ -104,11 +104,12 @@ export async function appendRow(tab: SheetName, values: (string | number)[]): Pr
  */
 export async function batchAppendRows(
   tab: SheetName,
-  rows: (string | number)[][]
+  rows: (string | number)[][],
+  spreadsheetIdOverride?: string
 ): Promise<void> {
   if (rows.length === 0) return;
-  const { spreadsheetId } = getConfig();
-  const sheets = getSheetClient();
+  const { spreadsheetId } = getConfig(spreadsheetIdOverride);
+  const sheets = getSheetClient(spreadsheetIdOverride);
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
@@ -125,9 +126,9 @@ export async function batchAppendRows(
  * Gets the sheet metadata needed for batchUpdate operations (row deletion).
  * Returns the sheetId (numeric) for a given tab name.
  */
-async function getSheetId(tab: SheetName): Promise<number> {
-  const { spreadsheetId } = getConfig();
-  const sheets = getSheetClient();
+async function getSheetId(tab: SheetName, spreadsheetIdOverride?: string): Promise<number> {
+  const { spreadsheetId } = getConfig(spreadsheetIdOverride);
+  const sheets = getSheetClient(spreadsheetIdOverride);
 
   const response = await sheets.spreadsheets.get({
     spreadsheetId,
@@ -162,10 +163,11 @@ async function findRowIndexById(tab: SheetName, id: string): Promise<number> {
 async function updateRow(
   tab: SheetName,
   rowIndex: number,
-  values: (string | number)[]
+  values: (string | number)[],
+  spreadsheetIdOverride?: string
 ): Promise<void> {
-  const { spreadsheetId } = getConfig();
-  const sheets = getSheetClient();
+  const { spreadsheetId } = getConfig(spreadsheetIdOverride);
+  const sheets = getSheetClient(spreadsheetIdOverride);
 
   const colEnd = String.fromCharCode(65 + values.length - 1); // A, B, C...
   await sheets.spreadsheets.values.update({
@@ -181,10 +183,10 @@ async function updateRow(
 /**
  * Deletes a specific row (1-indexed) from a tab using batchUpdate.
  */
-async function deleteRow(tab: SheetName, rowIndex: number): Promise<void> {
-  const { spreadsheetId } = getConfig();
-  const sheets = getSheetClient();
-  const sheetId = await getSheetId(tab);
+async function deleteRow(tab: SheetName, rowIndex: number, spreadsheetIdOverride?: string): Promise<void> {
+  const { spreadsheetId } = getConfig(spreadsheetIdOverride);
+  const sheets = getSheetClient(spreadsheetIdOverride);
+  const sheetId = await getSheetId(tab, spreadsheetIdOverride);
 
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
@@ -207,18 +209,18 @@ async function deleteRow(tab: SheetName, rowIndex: number): Promise<void> {
 
 // ─── Typed data-access: READ ───────────────────────────────────────────────
 
-export async function getExercises(): Promise<Exercise[]> {
-  const rows = await readSheet(SHEET_NAMES.EXERCISES);
+export async function getExercises(spreadsheetIdOverride?: string): Promise<Exercise[]> {
+  const rows = await readSheet(SHEET_NAMES.EXERCISES, undefined, spreadsheetIdOverride);
   return rows.map(([id, name, muscle_group]) => ({ id, name, muscle_group }));
 }
 
-export async function getRoutines(): Promise<Routine[]> {
-  const rows = await readSheet(SHEET_NAMES.ROUTINES);
+export async function getRoutines(spreadsheetIdOverride?: string): Promise<Routine[]> {
+  const rows = await readSheet(SHEET_NAMES.ROUTINES, undefined, spreadsheetIdOverride);
   return rows.map(([id, name, day_of_week]) => ({ id, name, day_of_week }));
 }
 
-export async function getRoutineExercises(): Promise<RoutineExercise[]> {
-  const rows = await readSheet(SHEET_NAMES.ROUTINE_EXERCISES);
+export async function getRoutineExercises(spreadsheetIdOverride?: string): Promise<RoutineExercise[]> {
+  const rows = await readSheet(SHEET_NAMES.ROUTINE_EXERCISES, undefined, spreadsheetIdOverride);
   return rows.map(([routine_id, exercise_id, sets, reps]) => ({
     routine_id,
     exercise_id,
@@ -227,8 +229,8 @@ export async function getRoutineExercises(): Promise<RoutineExercise[]> {
   }));
 }
 
-export async function getLogs(): Promise<Log[]> {
-  const rows = await readSheet(SHEET_NAMES.LOGS);
+export async function getLogs(spreadsheetIdOverride?: string): Promise<Log[]> {
+  const rows = await readSheet(SHEET_NAMES.LOGS, undefined, spreadsheetIdOverride);
   return rows.map(([id, date, routine_id, exercise_id, sets, reps, weight_kg]) => ({
     id,
     date,
@@ -242,33 +244,34 @@ export async function getLogs(): Promise<Log[]> {
 
 // ─── Typed data-access: WRITE (Exercises) ─────────────────────────────────
 
-export async function appendExercise(exercise: Exercise): Promise<void> {
+export async function appendExercise(exercise: Exercise, spreadsheetIdOverride?: string): Promise<void> {
   await appendRow(SHEET_NAMES.EXERCISES, [
     exercise.id,
     exercise.name,
     exercise.muscle_group,
-  ]);
+  ], spreadsheetIdOverride);
 }
 
 // ─── Typed data-access: WRITE (Routines) ──────────────────────────────────
 
-export async function appendRoutine(routine: Routine): Promise<void> {
+export async function appendRoutine(routine: Routine, spreadsheetIdOverride?: string): Promise<void> {
   await appendRow(SHEET_NAMES.ROUTINES, [
     routine.id,
     routine.name,
     routine.day_of_week,
-  ]);
+  ], spreadsheetIdOverride);
 }
 
 export async function updateRoutine(
   id: string,
-  fields: Partial<Pick<Routine, 'name' | 'day_of_week'>>
+  fields: Partial<Pick<Routine, 'name' | 'day_of_week'>>,
+  spreadsheetIdOverride?: string
 ): Promise<void> {
   const rowIndex = await findRowIndexById(SHEET_NAMES.ROUTINES, id);
   if (rowIndex === -1) throw new Error(`Routine "${id}" not found`);
 
   // Read existing row to preserve unchanged fields
-  const rows = await readSheet(SHEET_NAMES.ROUTINES);
+  const rows = await readSheet(SHEET_NAMES.ROUTINES, undefined, spreadsheetIdOverride);
   const existing = rows.find((r) => r[0] === id);
   if (!existing) throw new Error(`Routine "${id}" not found`);
 
@@ -280,21 +283,21 @@ export async function updateRoutine(
   ]);
 }
 
-export async function deleteRoutine(id: string): Promise<void> {
+export async function deleteRoutine(id: string, spreadsheetIdOverride?: string): Promise<void> {
   const rowIndex = await findRowIndexById(SHEET_NAMES.ROUTINES, id);
   if (rowIndex === -1) throw new Error(`Routine "${id}" not found`);
-  await deleteRow(SHEET_NAMES.ROUTINES, rowIndex);
+  await deleteRow(SHEET_NAMES.ROUTINES, rowIndex, spreadsheetIdOverride);
 }
 
 // ─── Typed data-access: WRITE (Routine_Exercises) ─────────────────────────
 
-export async function appendRoutineExercise(re: RoutineExercise): Promise<void> {
+export async function appendRoutineExercise(re: RoutineExercise, spreadsheetIdOverride?: string): Promise<void> {
   await appendRow(SHEET_NAMES.ROUTINE_EXERCISES, [
     re.routine_id,
     re.exercise_id,
     re.sets,
     re.reps,
-  ]);
+  ], spreadsheetIdOverride);
 }
 
 export async function updateRoutineExercise(
@@ -376,10 +379,10 @@ export async function batchAppendLogs(
 
 // ─── Connection test ───────────────────────────────────────────────────────
 
-export async function testConnection(): Promise<void> {
+export async function testConnection(spreadsheetIdOverride?: string): Promise<void> {
   try {
-    const { spreadsheetId } = getConfig();
-    const sheets = getSheetClient();
+    const { spreadsheetId } = getConfig(spreadsheetIdOverride);
+    const sheets = getSheetClient(spreadsheetIdOverride);
 
     const response = await sheets.spreadsheets.get({
       spreadsheetId,

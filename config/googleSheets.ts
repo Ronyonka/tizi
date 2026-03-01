@@ -25,8 +25,8 @@ export const SHEET_COLUMNS = {
 } as const;
 
 /** Loads and validates the configuration from environment variables */
-export function getConfig() {
-  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
+export function getConfig(spreadsheetIdOverride?: string) {
+  const spreadsheetId = spreadsheetIdOverride ?? process.env.GOOGLE_SPREADSHEET_ID;
   const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
