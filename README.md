@@ -1,6 +1,6 @@
 # Tizi — Gym Tracker App
 
-A React Native / Expo workout tracker with a dark gym-style UI. Workouts and exercises are persisted to a **Google Sheets spreadsheet** via server-side Expo API routes — no custom backend required.
+A React Native / Expo workout tracker with a dark gym-style UI. Workouts and exercises are persisted to **Firebase Firestore** (migrating from Google Sheets). The Firebase JS SDK runs client-side; the existing Expo API routes will be updated to use Firestore during migration.
 
 ---
 
@@ -13,7 +13,7 @@ A React Native / Expo workout tracker with a dark gym-style UI. Workouts and exe
 | Navigation | React Navigation — bottom tab navigator via `expo-router` Tabs |
 | UI | React Native (Vanilla StyleSheet, no Tailwind) |
 | Icons | `@expo/vector-icons` — Ionicons |
-| Database | Google Sheets (via `googleapis` Node.js SDK) |
+| Database | Firebase Firestore (JS SDK) — migrating from Google Sheets |
 | API layer | Expo API Routes (server-side, runs in Node/Bun) |
 | File import | `expo-document-picker` + `expo-file-system` |
 
@@ -43,10 +43,12 @@ app/
     test-sheets+api.ts     # GET /api/test-sheets (connection health check)
 
 config/
-  googleSheets.ts          # Sheet tab names, column definitions, env validation
+  googleSheets.ts          # Sheet tab names, column definitions, env validation (legacy)
+  firebase.ts              # Firestore collection name constants
 
 services/
-  googleSheets.ts          # Typed Google Sheets read/write service
+  googleSheets.ts          # Typed Google Sheets read/write service (legacy)
+  firebase.ts              # Firebase app init + Firestore export (`db`)
 
 constants/
   theme.ts                 # Dark gym-style design system (colors, spacing, typography, radii)
@@ -112,13 +114,13 @@ All tokens live in `constants/theme.ts`.
 
 ---
 
-## Google Sheets Database
+## Database — Firebase Firestore
 
-Tizi uses a Google Sheets spreadsheet as its database. Routines, exercises, and logs are stored across 4 tabs (`Exercises`, `Routines`, `Routine_Exercises`, `Logs`). All reads and writes happen **server-side** inside Expo API routes using a service account — credentials are never exposed to the client bundle.
+Tizi is migrating from Google Sheets to **Firebase Firestore**. The Firestore JS SDK initialises client-side using `EXPO_PUBLIC_` env vars (safe for Firestore, which uses security rules — unlike the previous service-account credentials). Data is split across 4 collections: `exercises`, `routines`, `routine_exercises`, `logs`.
 
-📖 **[Full setup guide → docs/googlesheets.md](docs/googlesheets.md)**
+📖 **[Firebase setup guide → docs/firebase.md](docs/firebase.md)**
 
-This covers: creating a GCP project, enabling the Sheets API, creating a service account, setting up the spreadsheet schema, configuring `.env`, and verifying the connection.
+> The original Google Sheets integration remains in place during migration. See [docs/googlesheets.md](docs/googlesheets.md) for the legacy setup.
 
 ---
 
@@ -163,11 +165,20 @@ The import deduplicates against existing data and shows a summary (rows parsed, 
 npm install
 ```
 
-### 2. Configure Google Sheets
+### 2. Configure Firebase
 
-Create a service account, share the spreadsheet, and add credentials to `.env`.
+Add your Firebase project credentials to `.env` (values come from the Firebase Console → Project Settings → Your apps):
 
-📖 **[Full Google Sheets setup guide → docs/googlesheets.md](docs/googlesheets.md)**
+```env
+EXPO_PUBLIC_FIREBASE_API_KEY=...
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=...
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=...
+EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=...
+EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
+EXPO_PUBLIC_FIREBASE_APP_ID=...
+```
+
+📖 **[Firebase setup guide → docs/firebase.md](docs/firebase.md)**
 
 ### 3. Run the app
 
