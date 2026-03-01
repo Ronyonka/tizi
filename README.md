@@ -38,6 +38,7 @@ app/
       [id]+api.ts          # PATCH /api/routines/:id, DELETE /api/routines/:id
     routine-exercises+api.ts  # GET/POST/PATCH/DELETE /api/routine-exercises
     csv-upload+api.ts      # POST /api/csv-upload
+    logs+api.ts            # GET /api/logs, POST /api/logs
     test-sheets+api.ts     # GET /api/test-sheets (connection health check)
 
 config/
@@ -56,9 +57,9 @@ constants/
 
 ### Home (`/`)
 - Greeting with user's name and avatar initial
-- "Today's Workout" banner with lime accent and a Start button
-- Quick stats row: Streak, Volume, PRs
-- Upcoming schedule list
+- "Today's Workout" logger (sets, weight, reps tracking)
+- Upcoming schedule list for the next 3 days
+- Saves session logs directly to Google Sheets
 
 ### Workouts (`/workouts`)
 The core feature. Routines are fetched from Google Sheets and displayed grouped by day of the week.
@@ -72,15 +73,15 @@ The core feature. Routines are fetched from Google Sheets and displayed grouped 
 📖 **[Full Workouts screen docs → docs/workouts.md](docs/workouts.md)**
 
 ### Calendar (`/calendar`)
-- Monthly heat-map grid (done / skipped / planned / rest)
+- Activity heatmap (4-week history grid)
 - This-week indicator row
-- Recent session log cards with PR badges
+- Recent session log cards with routine details and volume
 
 ### Progress (`/progress`)
 - Time range selector (1W / 1M / 3M / 6M / 1Y / All)
-- 2-column stats grid with trend arrows (Total Volume, Workouts, Avg Duration, Best Streak)
+- 2-column stats grid (Total Volume, Workouts, Exercises, Training Days)
 - Weekly volume bar chart
-- Personal Records list
+- Personal Records (PR) list automatically tracked
 
 ### Settings (`/settings`)
 - Profile card (name, email)
@@ -129,6 +130,7 @@ All routes are Expo API Routes (`+api.ts` files) running server-side.
 | `PATCH/DELETE` | `/api/routines/:id` | Update / delete routine (cascade) |
 | `GET/POST/PATCH/DELETE` | `/api/routine-exercises` | Manage exercise-to-routine links |
 | `POST` | `/api/csv-upload` | Bulk import from CSV |
+| `GET/POST` | `/api/logs` | Fetch history / save workout logs |
 | `GET` | `/api/test-sheets` | Sheets connection health check |
 
 📖 **[Full API reference → docs/workouts.md#api-routes](docs/workouts.md#api-routes)**

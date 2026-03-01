@@ -70,7 +70,7 @@ Junction table. One row per exercise-in-a-routine, storing the default set/rep p
 | `sets` | number | Default sets for this slot |
 | `reps` | number | Default reps per set |
 
-> **Note:** The `Logs` tab exists for future use (recording actual workout performance).
+> **Note:** The `Logs` tab is used for recording actual workout performance (weight and reps) from the Home screen.
 
 ---
 

@@ -104,7 +104,7 @@ Rename or create 4 sheets with **exactly** these names (case-sensitive):
 | `Exercises` | Exercise library |
 | `Routines` | Workout routines |
 | `Routine_Exercises` | Which exercises belong to which routine |
-| `Logs` | Workout logs (future use) |
+| `Logs` | Workout logs and session history |
 
 ### Add header rows
 
@@ -214,7 +214,7 @@ On app launch the root layout also calls this endpoint and logs the result to th
 | `sets` | number | |
 | `reps` | number | |
 
-### `Logs` *(ready for future use)*
+### `Logs`
 | Column | Type | Notes |
 |---|---|---|
 | `id` | string | Auto-generated: `log_<timestamp>` |
@@ -247,6 +247,7 @@ On app launch the root layout also calls this endpoint and logs the result to th
 | `readSheet(tab, range?)` | Reads rows from a tab (skips header) |
 | `appendRow(tab, values)` | Appends one row |
 | `batchAppendRows(tab, rows)` | Appends multiple rows in one API call |
+| `batchAppendLogs(logs)` | High-level helper for saving session logs |
 
 **Typed reads**
 | Function | Returns |
