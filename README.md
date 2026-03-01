@@ -39,6 +39,7 @@ app/
     routine-exercises+api.ts  # GET/POST/PATCH/DELETE /api/routine-exercises
     csv-upload+api.ts      # POST /api/csv-upload
     logs+api.ts            # GET /api/logs, POST /api/logs
+    progress+api.ts        # GET /api/progress (exercises + logs combined)
     test-sheets+api.ts     # GET /api/test-sheets (connection health check)
 
 config/
@@ -78,10 +79,12 @@ The core feature. Routines are fetched from Google Sheets and displayed grouped 
 - Recent session log cards with routine details and volume
 
 ### Progress (`/progress`)
-- Time range selector (1W / 1M / 3M / 6M / 1Y / All)
-- 2-column stats grid (Total Volume, Workouts, Exercises, Training Days)
-- Weekly volume bar chart
-- Personal Records (PR) list automatically tracked
+- Exercise list — every exercise in your library, with session count
+- Tap any exercise to open a detail view:
+  - Line chart of max weight lifted over time (custom pure-RN component, no extra packages)
+  - **30D / 3M / All** time-range filter
+  - Log history sorted newest → oldest (date · sets × reps · weight kg)
+- Empty state placeholders when no data exists for a given period
 
 ### Settings (`/settings`)
 - Profile card (name, email)
@@ -131,6 +134,7 @@ All routes are Expo API Routes (`+api.ts` files) running server-side.
 | `GET/POST/PATCH/DELETE` | `/api/routine-exercises` | Manage exercise-to-routine links |
 | `POST` | `/api/csv-upload` | Bulk import from CSV |
 | `GET/POST` | `/api/logs` | Fetch history / save workout logs |
+| `GET` | `/api/progress` | Exercises + logs combined (used by Progress screen) |
 | `GET` | `/api/test-sheets` | Sheets connection health check |
 
 📖 **[Full API reference → docs/workouts.md#api-routes](docs/workouts.md#api-routes)**
