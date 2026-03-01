@@ -82,41 +82,34 @@ Junction table. One row per exercise-in-a-routine, storing the default set/rep p
 ```
 workouts.tsx  (React Native — client-side)
     │
-    │  HTTP fetch (relative URL)
+    │  onSnapshot (Realtime Read)
+    ▼
+Firebase Firestore
+    ▲
+    │  HTTP mutation (relative URL)
     ▼
 Expo API Routes  (Node.js — server-side)
-    ├── /api/routines             (GET, POST)
+    ├── /api/routines             (POST)
     ├── /api/routines/:id         (PATCH, DELETE)
-    ├── /api/exercises            (GET, POST)
-    ├── /api/routine-exercises    (GET, POST, PATCH, DELETE)
+    ├── /api/exercises            (POST)
+    ├── /api/routine-exercises    (POST, PATCH, DELETE)
     └── /api/csv-upload           (POST)
     │
     │  Firestore JS SDK
     ▼
 services/firestore.ts
-    │
-    │  HTTPS
-    ▼
-Firebase Firestore
 ```
 
 ### On mount
 
-All three entities are fetched in parallel:
-
-```typescript
-const [routines, exercises, routineExercises] = await Promise.all([
-  fetch('/api/routines'),
-  fetch('/api/exercises'),
-  fetch('/api/routine-exercises'),
-]);
-```
+The Workouts screen sets up three separate Firestore listeners (`onSnapshot`) for `routines`, `exercises`, and `routine_exercises`. This ensures the UI stays perfectly in sync with the database at all times.
 
 ### On mutation
 
-1. **Optimistic update** — local state is updated immediately so the UI responds instantly.
-2. **API call** — the corresponding route writes to Firestore.
-3. **Error** — an Alert is shown and state is rolled back if necessary. User can manually refresh.
+All add, edit, and delete operations are performed via **API Routes**. 
+1. **API call** — the corresponding route writes to Firestore.
+2. **Realtime Update** — as soon as the write is committed to Firestore, the `onSnapshot` listeners on the client trigger an automatic UI update.
+3. **Error** — an Alert is shown if the API call fails.
 
 ---
 
@@ -156,7 +149,6 @@ const [routines, exercises, routineExercises] = await Promise.all([
 | Edit sets/reps | Tap the `4×8` badge on an exercise row |
 | Remove exercise from routine | Tap the trash icon on the exercise row (confirms first) |
 | CSV import | Tap the cloud-upload icon in the header |
-| Refresh from Firestore | Tap the refresh icon in the header |
 
 ### Add Routine modal
 

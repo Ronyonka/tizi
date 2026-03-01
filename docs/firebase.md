@@ -9,23 +9,24 @@ Tizi uses **Firebase Firestore** as its database (migrating from Google Sheets).
 ```
 Mobile App (Expo Go / native)
         │
-        │  HTTP fetch
+        │  onSnapshot (Realtime)
         ▼
-Expo API Routes  ──────────────────────────────────────────────────┐
-(server-side Node.js)                                              │
-  app/api/exercises+api.ts                                         │ Firestore JS SDK
-  app/api/routines+api.ts                                          │ Admin/Shared access
+Firebase Firestore ────────────────────────────────────────────────┐
+(gymtracker-d2a5f)                                                 │
+        ▲                                                          │
+        │  HTTP POST/PATCH/DELETE                                  │
+        │                                                          │
+Expo API Routes                                                    │ Firestore JS SDK
+(server-side Node.js)                                              │ Client & Server
+  app/api/exercises+api.ts                                         │
+  app/api/routines+api.ts                                          │
   app/api/routine-exercises+api.ts                                 │
   app/api/csv-upload+api.ts                                        ▼
-  app/api/test-sheets+api.ts                        Firebase Firestore
-        │                                             (gymtracker-d2a5f)
-        │  calls                                           │
-        ▼                                                  │
-services/firestore.ts  ────────────────────────────────────┘
-config/firebase.ts
+                                                    services/firestore.ts
+                                                    config/firebase.ts
 ```
 
-Tizi uses Firestore for persistence. While the SDK is capable of direct client-side access, all data writes and reads in the current architecture are routed through **Expo API Routes**. This maintains a consistent API layer and allows for server-side validation or processing if needed. Access is controlled by Firestore Security Rules.
+Tizi uses a hybrid data flow for efficiency and simplicity. **Reads** on the primary interactive screens (Home and Workouts) use direct Firestore `onSnapshot` listeners. This ensures the UI is always in sync across devices without manual polling. **Writes** (Create, Update, Delete) continue to be routed through **Expo API Routes** to maintain a clean command-line-testable API and allow for future server-side logic.
 
 ---
 

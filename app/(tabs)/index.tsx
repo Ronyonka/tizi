@@ -11,8 +11,17 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import {
+    collection,
+    onSnapshot,
+    query,
+    where,
+} from 'firebase/firestore';
+
+import { COLLECTIONS } from '@/config/firebase';
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
-import { Exercise, Log, Routine, RoutineExercise } from '@/services/googleSheets';
+import { db } from '@/services/firebase';
+import { Exercise, Log, Routine, RoutineExercise } from '@/services/firestore';
 
 const USERNAME = 'Ron';
 
@@ -38,17 +47,62 @@ export default function HomeScreen() {
   const [logs, setLogs] = useState<Record<string, SetLog[]>>({});
 
   useEffect(() => {
-    fetchHomeData();
-  }, []);
+    // ── Realtime listeners ──────────────────────────────────────────────────
+    
+    // We need routines, routine-exercises, and exercises to build the screen.
+    // Instead of complex joined queries, we can listen to the collections
+    // and re-calculate the derived state locally. This keeps the logic simple
+    // and ensures consistency.
 
-  const fetchHomeData = async () => {
-    try {
-      setLoading(true);
+    let allRoutines: Routine[] = [];
+    let allRoutineExercises: RoutineExercise[] = [];
+    let allExercises: Exercise[] = [];
+    let todayLogs: Log[] = [];
+
+    const updateState = () => {
       const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       const now = new Date();
       const todayDay = daysOfWeek[now.getDay()];
 
-      // Get names of upcoming 3 days
+      // 1. Process Today's Routine
+      const routine = allRoutines.find((r) => r.day_of_week === todayDay);
+      if (routine) {
+        setTodayRoutine(routine);
+        const routineExp = allRoutineExercises.filter(re => re.routine_id === routine.id);
+        const joined: ExerciseWithTarget[] = routineExp.map((re) => {
+          const ex = allExercises.find((e) => e.id === re.exercise_id);
+          // If exercise is not yet loaded, we skip or show placeholder
+          return ex ? { ...ex, ...re } : null;
+        }).filter(Boolean) as ExerciseWithTarget[];
+        
+        setExercises(joined);
+
+        // Update logs state - combine existing input with DB logs for today
+        setLogs((prev) => {
+          const newLogs: Record<string, SetLog[]> = { ...prev };
+          joined.forEach((ex) => {
+            const numSets = parseInt(ex.sets) || 3;
+            const exLogs = todayLogs.filter(l => l.exercise_id === ex.id);
+            
+            // If we have DB logs for this exercise today, prioritize them
+            if (exLogs.length > 0) {
+              newLogs[ex.id] = exLogs
+                .sort((a, b) => parseInt(a.sets) - parseInt(b.sets))
+                .map(l => ({ weight: String(l.weight_kg), reps: String(l.reps) }));
+            } 
+            // Otherwise, if no local input exists yet for this exercise, initialize it
+            else if (!newLogs[ex.id] || newLogs[ex.id].length === 0) {
+              newLogs[ex.id] = Array(numSets).fill({ weight: '', reps: '' });
+            }
+          });
+          return newLogs;
+        });
+      } else {
+        setTodayRoutine(null);
+        setExercises([]);
+      }
+
+      // 2. Process Upcoming
       const upcomingDayNames: string[] = [];
       for (let i = 1; i <= 3; i++) {
         const nextDate = new Date();
@@ -56,44 +110,6 @@ export default function HomeScreen() {
         upcomingDayNames.push(daysOfWeek[nextDate.getDay()]);
       }
 
-      // Fetch routines, routine-exercises and exercises in parallel
-      const [routinesRes, allReRes, allExRes] = await Promise.all([
-        fetch('/api/routines'),
-        fetch('/api/routine-exercises'),
-        fetch('/api/exercises'),
-      ]);
-
-      if (!routinesRes.ok || !allReRes.ok || !allExRes.ok) {
-          throw new Error('Failed to fetch data from API');
-      }
-
-      const allRoutines: Routine[] = await routinesRes.json();
-      const allRoutineExercises: RoutineExercise[] = await allReRes.json();
-      const allExercises: Exercise[] = await allExRes.json();
-
-      // 1. Process Today
-      const routine = allRoutines.find((r) => r.day_of_week === todayDay);
-      if (routine) {
-        setTodayRoutine(routine);
-        const routineExp = allRoutineExercises.filter(re => re.routine_id === routine.id);
-        const joined: ExerciseWithTarget[] = routineExp.map((re) => {
-          const ex = allExercises.find((e) => e.id === re.exercise_id);
-          return { ...ex!, ...re };
-        });
-        setExercises(joined);
-
-        // Initialize logs state
-        const initialLogs: Record<string, SetLog[]> = {};
-        joined.forEach((ex) => {
-          const numSets = parseInt(ex.sets) || 3;
-          initialLogs[ex.id] = Array(numSets).fill({ weight: '', reps: '' });
-        });
-        setLogs(initialLogs);
-      } else {
-        setTodayRoutine(null);
-      }
-
-      // 2. Process Upcoming
       const upcomingData: UpcomingWorkout[] = upcomingDayNames.map((dayName, idx) => {
         const r = allRoutines.find(routine => routine.day_of_week === dayName);
         const dayLabel = idx === 0 ? 'Tomorrow' : dayName.slice(0, 3);
@@ -117,14 +133,47 @@ export default function HomeScreen() {
       });
 
       setUpcoming(upcomingData);
-
-    } catch (error) {
-      console.error('Error fetching home data:', error);
-      Alert.alert('Error', 'Failed to load home data');
-    } finally {
       setLoading(false);
-    }
-  };
+    };
+
+    // Listen to Routines
+    const unsubRoutines = onSnapshot(collection(db, COLLECTIONS.routines), (snap) => {
+      allRoutines = snap.docs.map(d => d.data() as Routine);
+      updateState();
+    });
+
+    // Listen to Routine Exercises
+    const unsubRE = onSnapshot(collection(db, COLLECTIONS.routineExercises), (snap) => {
+      allRoutineExercises = snap.docs.map(d => d.data() as RoutineExercise);
+      updateState();
+    });
+
+    // Listen to Exercises
+    const unsubEx = onSnapshot(collection(db, COLLECTIONS.exercises), (snap) => {
+      allExercises = snap.docs.map(d => d.data() as Exercise);
+      updateState();
+    });
+
+    // Listen to Logs for today
+    const dateStr = new Date().toLocaleDateString();
+    const qLogs = query(
+      collection(db, COLLECTIONS.logs),
+      where('date', '>=', dateStr),
+      where('date', '<=', dateStr + ' \uf8ff')
+    );
+    
+    const unsubLogs = onSnapshot(qLogs, (snap) => {
+      todayLogs = snap.docs.map(d => d.data() as Log);
+      updateState();
+    });
+
+    return () => {
+      unsubRoutines();
+      unsubRE();
+      unsubEx();
+      unsubLogs();
+    };
+  }, []);
 
   const handleLogChange = (exerciseId: string, setIndex: number, field: keyof SetLog, value: string) => {
     setLogs((prev) => ({

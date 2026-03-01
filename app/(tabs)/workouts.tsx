@@ -11,6 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+import { collection, onSnapshot } from 'firebase/firestore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -30,28 +31,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { COLLECTIONS } from '@/config/firebase';
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
+import { db } from '@/services/firebase';
+import { Exercise, Routine, RoutineExercise } from '@/services/firestore';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Exercise {
-  id: string;
-  name: string;
-  muscle_group: string;
-}
-
-interface Routine {
-  id: string;
-  name: string;
-  day_of_week: string;
-}
-
-interface RoutineExercise {
-  routine_id: string;
-  exercise_id: string;
-  sets: string;
-  reps: string;
-}
+// Types are now imported from @/services/firestore
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -183,32 +170,44 @@ export default function WorkoutsScreen() {
 
   // ── Data loading ─────────────────────────────────────────────────────────
 
-  const loadAll = useCallback(async () => {
-    try {
-      setError(null);
-      const [r, e, re] = await Promise.all([
-        apiFetch<Routine[]>('/api/routines'),
-        apiFetch<Exercise[]>('/api/exercises'),
-        apiFetch<RoutineExercise[]>('/api/routine-exercises'),
-      ]);
-      setRoutines(r);
-      setExercises(e);
-      setRoutineExercises(re);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data');
-    }
-  }, []);
-
   useEffect(() => {
     setLoading(true);
-    loadAll().finally(() => setLoading(false));
-  }, [loadAll]);
+    
+    // Listen to Routines
+    const unsubRoutines = onSnapshot(collection(db, COLLECTIONS.routines), (snap) => {
+      setRoutines(snap.docs.map(d => d.data() as Routine));
+      setLoading(false);
+    });
+
+    // Listen to Exercises
+    const unsubExercises = onSnapshot(collection(db, COLLECTIONS.exercises), (snap) => {
+      setExercises(snap.docs.map(d => d.data() as Exercise));
+    });
+
+    // Listen to Routine Exercises
+    const unsubRE = onSnapshot(collection(db, COLLECTIONS.routineExercises), (snap) => {
+      setRoutineExercises(snap.docs.map(d => {
+        const data = d.data();
+        return {
+          routine_id: String(data.routine_id),
+          exercise_id: String(data.exercise_id),
+          sets: String(data.sets),
+          reps: String(data.reps),
+        } as RoutineExercise;
+      }));
+    });
+
+    return () => {
+      unsubRoutines();
+      unsubExercises();
+      unsubRE();
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
-    setSyncing(true);
-    await loadAll();
-    setSyncing(false);
-  }, [loadAll]);
+    // Manual refresh is now mostly redundant but kept as a simple way to clear error status
+    setError(null);
+  }, []);
 
   // ── Derived data ─────────────────────────────────────────────────────────
 
@@ -638,20 +637,6 @@ export default function WorkoutsScreen() {
               <ActivityIndicator size="small" color={Colors.primary} />
             ) : (
               <Ionicons name="cloud-upload-outline" size={22} color={Colors.textSecondary} />
-            )}
-          </TouchableOpacity>
-
-          {/* Refresh button */}
-          <TouchableOpacity
-            style={styles.iconHeaderBtn}
-            onPress={refresh}
-            disabled={syncing}
-            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-          >
-            {syncing ? (
-              <ActivityIndicator size="small" color={Colors.primary} />
-            ) : (
-              <Ionicons name="refresh-outline" size={22} color={Colors.textSecondary} />
             )}
           </TouchableOpacity>
 
