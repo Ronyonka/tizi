@@ -9,22 +9,23 @@ Tizi uses **Firebase Firestore** as its database (migrating from Google Sheets).
 ```
 Mobile App (Expo Go / native)
         │
-        │  Firestore JS SDK (client-side)
+        │  HTTP fetch
         ▼
-services/firebase.ts  ──────────────────────────────────────────┐
-  initializeApp(config)                                          │ HTTPS
-  getFirestore()                                                 ▼
-        │                                              Firebase Firestore
-        │  exports `db`                                (gymtracker-d2a5f)
-        ▼
+Expo API Routes  ──────────────────────────────────────────────────┐
+(server-side Node.js)                                              │
+  app/api/exercises+api.ts                                         │ Firestore JS SDK
+  app/api/routines+api.ts                                          │ Admin/Shared access
+  app/api/routine-exercises+api.ts                                 │
+  app/api/csv-upload+api.ts                                        ▼
+  app/api/test-sheets+api.ts                        Firebase Firestore
+        │                                             (gymtracker-d2a5f)
+        │  calls                                           │
+        ▼                                                  │
+services/firestore.ts  ────────────────────────────────────┘
 config/firebase.ts
-  COLLECTIONS.exercises
-  COLLECTIONS.routines
-  COLLECTIONS.routineExercises
-  COLLECTIONS.logs
 ```
 
-Unlike the previous Google Sheets integration, there are no server-side API routes involved — reads and writes go directly from the app to Firestore using the JS SDK, controlled by Firestore Security Rules.
+Tizi uses Firestore for persistence. While the SDK is capable of direct client-side access, all data writes and reads in the current architecture are routed through **Expo API Routes**. This maintains a consistent API layer and allows for server-side validation or processing if needed. Access is controlled by Firestore Security Rules.
 
 ---
 

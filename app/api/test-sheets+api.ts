@@ -1,17 +1,16 @@
 /**
  * Expo API Route: GET /api/test-sheets
  *
- * Runs the Google Sheets connection test server-side and returns the result.
+ * Runs the Firestore connection test server-side and returns the result.
  * Accessible during development at: http://localhost:8081/api/test-sheets
  */
 
-import { testConnection } from '@/services/googleSheets';
+import { testConnection } from '@/services/firestore';
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const spreadsheetId = request.headers.get('x-spreadsheet-id') || undefined;
-    await testConnection(spreadsheetId);
-    return Response.json({ success: true, message: 'Connection to Google Sheets successful' });
+    await testConnection();
+    return Response.json({ success: true, message: 'Connection to Firestore successful' });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return Response.json({ success: false, message }, { status: 500 });

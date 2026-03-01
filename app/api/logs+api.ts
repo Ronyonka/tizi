@@ -3,7 +3,7 @@
  * POST — save multiple exercise logs
  */
 
-import { batchAppendLogs, getLogs, Log } from '@/services/googleSheets';
+import { batchAppendLogs, getLogs, Log } from '@/services/firestore';
 
 export async function GET() {
   try {

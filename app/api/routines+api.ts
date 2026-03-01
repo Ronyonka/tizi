@@ -7,12 +7,11 @@
 import {
     appendRoutine,
     getRoutines,
-} from '@/services/googleSheets';
+} from '@/services/firestore';
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const spreadsheetId = request.headers.get('x-spreadsheet-id') || undefined;
-    const routines = await getRoutines(spreadsheetId);
+    const routines = await getRoutines();
     return Response.json(routines);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

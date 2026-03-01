@@ -19,7 +19,7 @@ Deep-dive documentation for the Workouts screen in Tizi — covering the data mo
 
 ## Overview
 
-The Workouts screen is the core feature of Tizi. It lets users build a weekly workout plan by creating **Routines** (named workout sessions tied to a day of the week) and populating them with **Exercises** (each with a default set/rep count). All data is persisted to Google Sheets in real time.
+The Workouts screen is the core feature of Tizi. It lets users build a weekly workout plan by creating **Routines** (named workout sessions tied to a day of the week) and populating them with **Exercises** (each with a default set/rep count). All data is persisted to **Firebase Firestore** in real time.
 
 ```
 Routine
@@ -35,7 +35,7 @@ Routine
 
 ## Data Model
 
-Three Google Sheets tabs are involved:
+Four Firestore collections are involved:
 
 ### `Exercises`
 
@@ -70,7 +70,7 @@ Junction table. One row per exercise-in-a-routine, storing the default set/rep p
 | `sets` | number | Default sets for this slot |
 | `reps` | number | Default reps per set |
 
-> **Note:** The `Logs` tab is used for recording actual workout performance (weight and reps) from the Home screen.
+> **Note:** The `logs` collection is used for recording actual workout performance (weight and reps) from the Home screen.
 
 ---
 
@@ -88,13 +88,13 @@ Expo API Routes  (Node.js — server-side)
     ├── /api/routine-exercises    (GET, POST, PATCH, DELETE)
     └── /api/csv-upload           (POST)
     │
-    │  googleapis SDK (service account JWT)
+    │  Firestore JS SDK
     ▼
-services/googleSheets.ts
+services/firestore.ts
     │
-    │  Google Sheets REST API
+    │  HTTPS
     ▼
-Your Google Spreadsheet
+Firebase Firestore
 ```
 
 ### On mount
@@ -112,8 +112,8 @@ const [routines, exercises, routineExercises] = await Promise.all([
 ### On mutation
 
 1. **Optimistic update** — local state is updated immediately so the UI responds instantly.
-2. **API call** — the corresponding route writes to Google Sheets.
-3. **Error** — an Alert is shown and state is not rolled back (user can manually refresh).
+2. **API call** — the corresponding route writes to Firestore.
+3. **Error** — an Alert is shown and state is rolled back if necessary. User can manually refresh.
 
 ---
 
@@ -153,7 +153,7 @@ const [routines, exercises, routineExercises] = await Promise.all([
 | Edit sets/reps | Tap the `4×8` badge on an exercise row |
 | Remove exercise from routine | Tap the trash icon on the exercise row (confirms first) |
 | CSV import | Tap the cloud-upload icon in the header |
-| Refresh from Sheets | Tap the refresh icon in the header |
+| Refresh from Firestore | Tap the refresh icon in the header |
 
 ### Add Routine modal
 
@@ -341,7 +341,7 @@ Removes a single exercise from a routine.
 
 ### `POST /api/csv-upload`
 
-Bulk-imports data from a CSV. Deduplicates against existing Sheets data before writing.
+Bulk-imports data from a CSV. Deduplicates against existing Firestore data before writing.
 
 See [CSV Bulk Import](#csv-bulk-import) for full details.
 
@@ -355,13 +355,13 @@ See [CSV Bulk Import](#csv-bulk-import) for full details.
 2. `expo-document-picker` opens the native file picker — select a `.csv` file
 3. `expo-file-system` reads the file content as a string
 4. The CSV text is `POST`-ed to `/api/csv-upload` as `{ "csv": "..." }`
-5. The server parses the CSV, fetches existing data from Sheets to deduplicate, then batch-appends only new rows
+5. The server parses the CSV, fetches existing data from Firestore to deduplicate, then appends only new documents
 6. A summary Alert is shown: rows parsed / new routines / new exercises / new links
-7. The screen refreshes from Sheets
+7. The screen refreshes from Firestore
 
 ### Deduplication logic
 
-- **Exercises**: deduplicated by `name` (case-insensitive). If an exercise with the same name already exists, the existing record is reused — a duplicate row is not added.
+- **Exercises**: deduplicated by `name` (case-insensitive). If an exercise with the same name already exists, the existing record is reused — a duplicate document is not added.
 - **Routines**: deduplicated by `name + day_of_week` (both case-insensitive). Same name on a different day = different routine.
 - **Routine_Exercises**: deduplicated by `routine_id + exercise_id`. If the link already exists, it is skipped (the existing sets/reps are preserved).
 
@@ -417,46 +417,45 @@ Leg Day,Wednesday,Leg Press,Quads,3,12
 
 ## Service Layer Reference
 
-The functions below live in `services/googleSheets.ts` and are called from the API routes.
+The functions below live in `services/firestore.ts` and are called from the API routes.
 
 ### Read functions
 
 | Function | Returns | Description |
 |---|---|---|
-| `getExercises()` | `Exercise[]` | All rows from `Exercises` tab |
-| `getRoutines()` | `Routine[]` | All rows from `Routines` tab |
-| `getRoutineExercises()` | `RoutineExercise[]` | All rows from `Routine_Exercises` tab |
+| `getExercises()` | `Exercise[]` | All documents from `exercises` collection |
+| `getRoutines()` | `Routine[]` | All documents from `routines` collection |
+| `getRoutineExercises()` | `RoutineExercise[]` | All documents from `routine_exercises` collection |
 
 ### Write functions — Routines
 
 | Function | Description |
 |---|---|
-| `appendRoutine(routine)` | Appends a new row to `Routines` |
-| `updateRoutine(id, fields)` | Finds row by id, patches `name` and/or `day_of_week` |
-| `deleteRoutine(id)` | Finds row by id, deletes it via `batchUpdate` |
-| `deleteAllRoutineExercisesForRoutine(routineId)` | Deletes all `Routine_Exercises` rows for a given routine, in reverse row order to avoid index shifting |
+| `appendRoutine(routine)` | Appends a new document to `routines` |
+| `updateRoutine(id, fields)` | Finds document by id, patches `name` and/or `day_of_week` |
+| `deleteRoutine(id)` | Finds document by id, deletes it |
+| `deleteAllRoutineExercisesForRoutine(routineId)` | Deletes all `routine_exercises` documents for a given routine |
 
 ### Write functions — Exercises
 
 | Function | Description |
 |---|---|
-| `appendExercise(exercise)` | Appends a new row to `Exercises` |
+| `appendExercise(ex)` | Appends a new document to `exercises` |
 
 ### Write functions — Routine_Exercises
 
 | Function | Description |
 |---|---|
-| `appendRoutineExercise(re)` | Appends a new link row |
-| `updateRoutineExercise(routineId, exerciseId, sets, reps)` | Finds link row and updates sets/reps |
-| `deleteRoutineExercise(routineId, exerciseId)` | Finds and deletes the link row |
+| `appendRoutineExercise(re)` | Appends a new link document |
+| `updateRoutineExercise(routineId, exerciseId, sets, reps)` | Finds link document and updates sets/reps |
+| `deleteRoutineExercise(routineId, exerciseId)` | Finds and deletes the link document |
 
 ### Batch / generic helpers
 
 | Function | Description |
 |---|---|
-| `batchAppendRows(tab, rows)` | Appends multiple rows in a single API call (used by CSV import) |
-| `appendRow(tab, values)` | Appends a single row |
-| `readSheet(tab, range?)` | Reads all rows from a tab (skips header row 1) |
+| `batchAppendLogs(logs)` | High-level helper for saving session logs (chunks in 500s) |
+| `testConnection()` | Verifies Firestore connectivity |
 
 ---
 
@@ -484,7 +483,7 @@ With the appropriate HTTP status code (`400` for validation, `500` for service e
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Screen shows "Failed to load data" on open | Google Sheets connection issue | Check `curl localhost:8081/api/test-sheets` and verify `.env` values |
-| "Routine not found" on delete | Row was already deleted, or ID mismatch | Refresh the screen |
-| CSV import succeeds but no new rows appear | All rows were deduplicated as already existing | Check existing data in Sheets |
-| Sets/reps not updating | Row lookup failed (routine_id + exercise_id not found) | Refresh to re-sync, then retry |
+| Screen shows "Failed to load data" on open | Firestore connection issue | Check `curl localhost:8081/api/test-sheets` and verify `.env` values |
+| "Routine not found" on delete | Document was already deleted, or ID mismatch | Refresh the screen |
+| CSV import succeeds but no new documents appear | All rows were deduplicated as already existing | Check existing data in Firestore |
+| Sets/reps not updating | Document lookup failed (routine_id + exercise_id not found) | Refresh to re-sync, then retry |

@@ -4,7 +4,7 @@
  *       so the Progress screen only needs one round-trip.
  */
 
-import { getExercises, getLogs } from '@/services/googleSheets';
+import { getExercises, getLogs } from '@/services/firestore';
 
 export async function GET() {
   try {

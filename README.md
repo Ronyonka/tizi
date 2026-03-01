@@ -1,6 +1,6 @@
 # Tizi — Gym Tracker App
 
-A React Native / Expo workout tracker with a dark gym-style UI. Workouts and exercises are persisted to **Firebase Firestore** (migrating from Google Sheets). The Firebase JS SDK runs client-side; the existing Expo API routes will be updated to use Firestore during migration.
+A React Native / Expo workout tracker with a dark gym-style UI. Workouts and exercises are persisted to **Firebase Firestore**. The Firebase JS SDK runs client-side; Expo API routes have been migrated to use Firestore as the data access layer.
 
 ---
 
@@ -13,7 +13,7 @@ A React Native / Expo workout tracker with a dark gym-style UI. Workouts and exe
 | Navigation | React Navigation — bottom tab navigator via `expo-router` Tabs |
 | UI | React Native (Vanilla StyleSheet, no Tailwind) |
 | Icons | `@expo/vector-icons` — Ionicons |
-| Database | Firebase Firestore (JS SDK) — migrating from Google Sheets |
+| Database | Firebase Firestore (JS SDK) |
 | API layer | Expo API Routes (server-side, runs in Node/Bun) |
 | File import | `expo-document-picker` + `expo-file-system` |
 
@@ -47,8 +47,9 @@ config/
   firebase.ts              # Firestore collection name constants
 
 services/
-  googleSheets.ts          # Typed Google Sheets read/write service (legacy)
+  googleSheets.ts          # Legacy Google Sheets service
   firebase.ts              # Firebase app init + Firestore export (`db`)
+  firestore.ts             # Primary Firestore data-access layer
 
 constants/
   theme.ts                 # Dark gym-style design system (colors, spacing, typography, radii)
@@ -116,11 +117,7 @@ All tokens live in `constants/theme.ts`.
 
 ## Database — Firebase Firestore
 
-Tizi is migrating from Google Sheets to **Firebase Firestore**. The Firestore JS SDK initialises client-side using `EXPO_PUBLIC_` env vars (safe for Firestore, which uses security rules — unlike the previous service-account credentials). Data is split across 4 collections: `exercises`, `routines`, `routine_exercises`, `logs`.
-
-📖 **[Firebase setup guide → docs/firebase.md](docs/firebase.md)**
-
-> The original Google Sheets integration remains in place during migration. See [docs/googlesheets.md](docs/googlesheets.md) for the legacy setup.
+> **Note**: Tizi has migrated to Firestore. See [docs/googlesheets.md](docs/googlesheets.md) for the legacy setup documentation.
 
 ---
 
@@ -196,5 +193,5 @@ Options:
 
 ```bash
 curl http://localhost:8081/api/test-sheets
-# → { "success": true, "message": "Connection to Google Sheets successful" }
+# → { "success": true, "message": "Connection to Firestore successful" }
 ```

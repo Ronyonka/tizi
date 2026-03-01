@@ -8,7 +8,7 @@ import {
     deleteAllRoutineExercisesForRoutine,
     deleteRoutine,
     updateRoutine,
-} from '@/services/googleSheets';
+} from '@/services/firestore';
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   const { id } = params;

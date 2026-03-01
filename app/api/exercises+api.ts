@@ -7,7 +7,7 @@
 import {
     appendExercise,
     getExercises,
-} from '@/services/googleSheets';
+} from '@/services/firestore';
 
 export async function GET() {
   try {

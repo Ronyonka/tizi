@@ -1,6 +1,9 @@
-# Google Sheets Integration
+# Google Sheets Integration (DEPRECATED)
 
-Tizi uses a Google Sheets spreadsheet as its database. All reads and writes happen **server-side** inside Expo API Routes using the `googleapis` Node.js SDK — the service account credentials are never exposed to the client bundle.
+> [!WARNING]
+> This integration is legacy and has been replaced by **Firebase Firestore**. This document is kept for reference only. For the current database setup, see [docs/firebase.md](docs/firebase.md).
+
+Tizi previously used a Google Sheets spreadsheet as its database.
 
 ---
 

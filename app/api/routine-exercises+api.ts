@@ -11,7 +11,7 @@ import {
     deleteRoutineExercise,
     getRoutineExercises,
     updateRoutineExercise,
-} from '@/services/googleSheets';
+} from '@/services/firestore';
 
 export async function GET(request: Request) {
   try {

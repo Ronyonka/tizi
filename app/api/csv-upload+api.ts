@@ -5,16 +5,17 @@
  *   routine_name, day_of_week, exercise_name, muscle_group, sets, reps
  *
  * Parses the CSV, deduplicates against existing data, and writes new rows
- * to the Exercises, Routines, and Routine_Exercises tabs.
+ * to the exercises, routines, and routine_exercises Firestore collections.
  */
 
-import { SHEET_NAMES } from '@/config/googleSheets';
 import {
-    batchAppendRows,
+    appendExercise,
+    appendRoutine,
+    appendRoutineExercise,
     getExercises,
     getRoutineExercises,
     getRoutines,
-} from '@/services/googleSheets';
+} from '@/services/firestore';
 
 interface CsvRow {
   routine_name: string;
@@ -100,9 +101,9 @@ export async function POST(request: Request) {
       existingRoutineExercises.map((re) => `${re.routine_id}::${re.exercise_id}`)
     );
 
-    const newExerciseRows: (string | number)[][] = [];
-    const newRoutineRows: (string | number)[][] = [];
-    const newReRows: (string | number)[][] = [];
+    const newExercises: { id: string; name: string; muscle_group: string }[] = [];
+    const newRoutines: { id: string; name: string; day_of_week: string }[] = [];
+    const newRoutineExercises: { routine_id: string; exercise_id: string; sets: string; reps: string }[] = [];
 
     const ts = Date.now();
 
@@ -116,7 +117,7 @@ export async function POST(request: Request) {
         const id = `ex_${ts}_${i}`;
         const ex = { id, name: row.exercise_name, muscle_group: row.muscle_group };
         exerciseMap.set(exKey, ex);
-        newExerciseRows.push([id, row.exercise_name, row.muscle_group]);
+        newExercises.push(ex);
       }
 
       // Upsert Routine
@@ -124,7 +125,7 @@ export async function POST(request: Request) {
         const id = `routine_${ts}_${i}`;
         const rt = { id, name: row.routine_name, day_of_week: row.day_of_week };
         routineMap.set(rtKey, rt);
-        newRoutineRows.push([id, row.routine_name, row.day_of_week]);
+        newRoutines.push(rt);
       }
 
       // Upsert Routine_Exercise
@@ -134,30 +135,24 @@ export async function POST(request: Request) {
 
       if (!reSet.has(reKey)) {
         reSet.add(reKey);
-        newReRows.push([routineId, exerciseId, row.sets, row.reps]);
+        newRoutineExercises.push({ routine_id: routineId, exercise_id: exerciseId, sets: row.sets, reps: row.reps });
       }
     }
 
-    // Write all new rows in batch
+    // Write all new documents to Firestore
     await Promise.all([
-      newExerciseRows.length > 0
-        ? batchAppendRows(SHEET_NAMES.EXERCISES, newExerciseRows)
-        : Promise.resolve(),
-      newRoutineRows.length > 0
-        ? batchAppendRows(SHEET_NAMES.ROUTINES, newRoutineRows)
-        : Promise.resolve(),
-      newReRows.length > 0
-        ? batchAppendRows(SHEET_NAMES.ROUTINE_EXERCISES, newReRows)
-        : Promise.resolve(),
+      ...newExercises.map((ex) => appendExercise(ex)),
+      ...newRoutines.map((rt) => appendRoutine(rt)),
+      ...newRoutineExercises.map((re) => appendRoutineExercise(re)),
     ]);
 
     return Response.json({
       success: true,
       summary: {
         rows_parsed: rows.length,
-        exercises_added: newExerciseRows.length,
-        routines_added: newRoutineRows.length,
-        routine_exercises_added: newReRows.length,
+        exercises_added: newExercises.length,
+        routines_added: newRoutines.length,
+        routine_exercises_added: newRoutineExercises.length,
       },
     });
   } catch (error) {
