@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Tizi",
-    "slug": "Tizi",
+    "slug": "tizi",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -12,6 +12,8 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.yourname.tizi",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#0A0A0F",
         "foregroundImage": "./assets/images/adaptive-icon.png",
@@ -44,6 +46,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "1108f762-f41c-45f2-935f-52f4daa5b7cd"
+      }
+    },
+    "owner": "ronyonka"
   }
 }

@@ -1,4 +1,9 @@
-# Tizi — Gym Tracker App
+# Tizi — Personal Gym Tracker
+
+[![React Native](https://img.shields.io/badge/React_Native-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)]()
+[![Expo](https://img.shields.io/badge/Expo-000020?style=for-the-badge&logo=expo&logoColor=white)]()
+[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)]()
+[![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)]()
 
 A React Native / Expo workout tracker with a dark gym-style UI. Workouts and exercises are persisted to **Firebase Firestore**. The Firebase JS SDK runs client-side; Expo API routes have been migrated to use Firestore as the data access layer.
 
@@ -16,6 +21,16 @@ A React Native / Expo workout tracker with a dark gym-style UI. Workouts and exe
 | Database | Firebase Firestore (JS SDK + REST API) |
 | API layer | Expo API Routes (Node.js) using **Firestore REST API** |
 | File import | `expo-document-picker` + `expo-file-system` |
+
+---
+
+## Features
+- **Workout planning**: manual creation and CSV bulk import
+- **Exercise library**: with muscle group tagging
+- **Daily workout logging**: with sets, reps, and weight (KG)
+- **Calendar view**: with streak tracking
+- **Progress charts**: per exercise with 30D / 3M / All time filters
+- **Push notifications**: for scheduled workouts
 
 ---
 
@@ -55,139 +70,77 @@ constants/
 
 ---
 
-## Screens
+## Screenshots
 
-### Home (`/`)
-- Greeting with user's name and avatar initial
-- "Today's Workout" logger (sets, weight, reps tracking)
-- Upcoming schedule list for the next 3 days
-- Hybrid data flow: Realtime SDK reads + REST API writes
-
-### Workouts (`/workouts`)
-The core feature. Routines are fetched from Firestore and displayed grouped by day of the week.
-
-- Add / edit / delete routines (name + day)
-- Add exercises from the library or create new ones (name + muscle group + sets/reps)
-- Edit sets × reps inline; remove exercises from routines
-- CSV bulk import to populate Firestore in one go
-- Manual sync / refresh button; error banner with retry
-
-📖 **[Full Workouts screen docs → docs/workouts.md](docs/workouts.md)**
-
-### Calendar (`/calendar`)
-- Activity heatmap (4-week history grid)
-- This-week indicator row
-- Recent session log cards with routine details and volume
-
-### Progress (`/progress`)
-- Exercise list with session count
-- Max Lift Chart (weight over time)
-- **Log History**: View recent logs and **delete** individual entries
-- Empty state placeholders
-
-### Settings (`/settings`)
-- Profile card (name, email)
-- Training preferences (plan, goal, rest timer)
-- Toggle switches (push notifications, workout reminders, haptic feedback, metric/imperial)
-- Data section (export, cloud backup, clear)
-- About section (version, privacy, terms)
-- Sign Out button
+*(Placeholder: Screenshots to be added later)*
 
 ---
 
-## Design System
+## Environment Variables
 
-All tokens live in `constants/theme.ts`.
-
-| Token | Value | Purpose |
-|---|---|---|
-| `Colors.background` | `#0A0A0F` | Near-black app background |
-| `Colors.surface` | `#13131A` | Cards and panels |
-| `Colors.primary` | `#E8FF3D` | Electric lime — main accent |
-| `Colors.secondary` | `#FF4D4D` | Red — alerts and destructive actions |
-| `Colors.success` | `#4CFF91` | Green — positive indicators |
-| `Colors.tabBar` | `#0F0F18` | Bottom tab bar |
-| `Colors.tabActive` | `#E8FF3D` | Active tab icon / label |
-
----
-
-## Database — Firebase Firestore
-
-> **Note**: Tizi has migrated to Firestore.
-
----
-
-## API Routes
-
-All routes are Expo API Routes (`+api.ts` files) running server-side.
-
-| Method | Path | Description |
-|---|---|---|
-| `GET/POST` | `/api/exercises` | List / create exercises |
-| `GET/POST` | `/api/routines` | List / create routines |
-| `PATCH/DELETE` | `/api/routines/:id` | Update / delete routine (cascade) |
-| `GET/POST/PATCH/DELETE` | `/api/routine-exercises` | Manage exercise-to-routine links |
-| `POST` | `/api/csv-upload` | Bulk import from CSV |
-| `GET/POST` | `/api/logs` | Fetch history / save workout logs |
-| `GET` | `/api/progress` | Exercises + logs combined (used by Progress screen) |
-| `GET` | `/api/test-sheets` | Firestore connection health check |
-
-📖 **[Full API reference → docs/workouts.md#api-routes](docs/workouts.md#api-routes)**
-
----
-
-## CSV Bulk Import
-
-Upload a `.csv` file from the Workouts screen header (cloud-upload icon). Required columns:
-
-```
-routine_name, day_of_week, exercise_name, muscle_group, sets, reps
-```
-
-The import deduplicates against existing data and shows a summary (rows parsed, new routines/exercises/links added).
-
-📖 **[Full CSV docs → docs/workouts.md#csv-bulk-import](docs/workouts.md#csv-bulk-import)**
-
----
-
-## Setup
-
-### 1. Install dependencies
-
-```bash
-npm install
-```
-
-### 2. Configure Firebase
-
-Add your Firebase project credentials to `.env` (values come from the Firebase Console → Project Settings → Your apps):
+A `.env.example` file is provided in the repository with the following required variables:
 
 ```env
-EXPO_PUBLIC_FIREBASE_API_KEY=...
-EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=...
-EXPO_PUBLIC_FIREBASE_PROJECT_ID=...
-EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=...
-EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
-EXPO_PUBLIC_FIREBASE_APP_ID=...
+EXPO_PUBLIC_FIREBASE_API_KEY=
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=
+EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=
+EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+EXPO_PUBLIC_FIREBASE_APP_ID=
+FIREBASE_PROJECT_ID=
+FIREBASE_CLIENT_EMAIL=
+FIREBASE_PRIVATE_KEY=
 ```
 
-📖 **[Firebase setup guide → docs/firebase.md](docs/firebase.md)**
+---
 
-### 3. Run the app
+## Setup Instructions
+
+1. **Clone the repository**
+   ```bash
+   git clone <your-repo-url>
+   cd Tizi
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Configure Environment Variables**
+   Copy the `.env.example` file to `.env` and fill in your Firebase credentials.
+   ```bash
+   cp .env.example .env
+   ```
+   📖 **[Firebase setup guide → docs/firebase.md](docs/firebase.md)**
+
+4. **Run the app locally**
+   ```bash
+   npx expo start --clear
+   ```
+   Options:
+   - **iOS Simulator** — press `i`
+   - **Android Emulator** — press `a`
+   - **Expo Go** — scan the QR code
+
+5. **Verify the connection**
+   ```bash
+   curl http://localhost:8081/api/test-sheets
+   ```
+
+---
+
+## Build Instructions (Android APK)
+
+To build a sideloadable APK for Android using Expo Application Services (EAS):
 
 ```bash
-npx expo start --clear
+eas build -p android --profile preview
 ```
 
-Options:
-- **iOS Simulator** — press `i`
-- **Android Emulator** — press `a`
-- **Expo Go** — scan the QR code
-- **Web** — press `w`
+---
 
-### 4. Verify the connection
+## API Routes & Documentation
 
-```bash
-curl http://localhost:8081/api/test-sheets
-# → { "success": true, "message": "Connection to Firestore successful" }
-```
+- 📖 **[Full API reference & Workouts docs → docs/workouts.md](docs/workouts.md)**
+- 📖 **[CSV Bulk Import format → docs/workouts.md#csv-bulk-import](docs/workouts.md#csv-bulk-import)**
