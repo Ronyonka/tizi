@@ -13,8 +13,8 @@ A React Native / Expo workout tracker with a dark gym-style UI. Workouts and exe
 | Navigation | React Navigation — bottom tab navigator via `expo-router` Tabs |
 | UI | React Native (Vanilla StyleSheet, no Tailwind) |
 | Icons | `@expo/vector-icons` — Ionicons |
-| Database | Firebase Firestore (JS SDK) |
-| API layer | Expo API Routes (server-side, runs in Node/Bun) |
+| Database | Firebase Firestore (JS SDK + REST API) |
+| API layer | Expo API Routes (Node.js) using **Firestore REST API** |
 | File import | `expo-document-picker` + `expo-file-system` |
 
 ---
@@ -26,31 +26,31 @@ app/
   _layout.tsx              # Root layout — forces dark theme
   (tabs)/
     _layout.tsx            # Bottom tab navigator (5 tabs)
-    index.tsx              # Home screen
-    workouts.tsx           # Workouts screen (full CRUD + CSV import)
+    index.tsx              # Home screen (Realtime SDK reads)
+    workouts.tsx           # Workouts screen (Realtime SDK reads)
     calendar.tsx           # Calendar screen
-    progress.tsx           # Progress screen
+    progress.tsx           # Progress screen (Log deletion, Max Lift chart)
     settings.tsx           # Settings screen
   api/
-    exercises+api.ts       # GET /api/exercises, POST /api/exercises
-    routines+api.ts        # GET /api/routines, POST /api/routines
+    exercises+api.ts       # POST /api/exercises
+    routines+api.ts        # POST /api/routines
     routines/
       [id]+api.ts          # PATCH /api/routines/:id, DELETE /api/routines/:id
-    routine-exercises+api.ts  # GET/POST/PATCH/DELETE /api/routine-exercises
-    csv-upload+api.ts      # POST /api/csv-upload
-    logs+api.ts            # GET /api/logs, POST /api/logs
-    progress+api.ts        # GET /api/progress (exercises + logs combined)
-  api/test-sheets+api.ts   # GET /api/test-sheets (connection health check)
+    logs/
+      [id]+api.ts          # DELETE /api/logs/:id
+    progress+api.ts        # GET /api/progress (REST-based combined fetch)
+    test-sheets+api.ts     # Health check (REST-based)
 
 config/
   firebase.ts              # Firestore collection name constants
 
 services/
-  firebase.ts              # Firebase app init + Firestore export (`db`)
-  firestore.ts             # Primary Firestore data-access layer
+  firebase.ts              # Firebase SDK init
+  firestore.ts             # Client-side SDK helpers (listeners)
+  firestore-rest.ts        # Server-side REST helpers (reliable writes)
 
 constants/
-  theme.ts                 # Dark gym-style design system (colors, spacing, typography, radii)
+  theme.ts                 # Dark gym-style design system
 ```
 
 ---
@@ -61,7 +61,7 @@ constants/
 - Greeting with user's name and avatar initial
 - "Today's Workout" logger (sets, weight, reps tracking)
 - Upcoming schedule list for the next 3 days
-- Saves session logs directly to Firestore
+- Hybrid data flow: Realtime SDK reads + REST API writes
 
 ### Workouts (`/workouts`)
 The core feature. Routines are fetched from Firestore and displayed grouped by day of the week.
@@ -80,12 +80,10 @@ The core feature. Routines are fetched from Firestore and displayed grouped by d
 - Recent session log cards with routine details and volume
 
 ### Progress (`/progress`)
-- Exercise list — every exercise in your library, with session count
-- Tap any exercise to open a detail view:
-  - Line chart of max weight lifted over time (custom pure-RN component, no extra packages)
-  - **30D / 3M / All** time-range filter
-  - Log history sorted newest → oldest (date · sets × reps · weight kg)
-- Empty state placeholders when no data exists for a given period
+- Exercise list with session count
+- Max Lift Chart (weight over time)
+- **Log History**: View recent logs and **delete** individual entries
+- Empty state placeholders
 
 ### Settings (`/settings`)
 - Profile card (name, email)

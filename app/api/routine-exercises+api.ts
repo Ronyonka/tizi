@@ -11,7 +11,7 @@ import {
     deleteRoutineExercise,
     getRoutineExercises,
     updateRoutineExercise,
-} from '@/services/firestore';
+} from '@/services/firestore-rest';
 
 export async function GET(request: Request) {
   try {

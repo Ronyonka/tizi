@@ -1,12 +1,14 @@
+import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Dimensions,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -32,6 +34,12 @@ const TIME_RANGES: TimeRange[] = ['30D', '3M', 'All'];
  */
 function normaliseDateString(raw: string): string {
   if (!raw) return '';
+  
+  // If it's an ISO string (2026-03-01T22:13:03.000Z), take the first 10 chars
+  if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) {
+    return raw.substring(0, 10);
+  }
+
   const trimmed = raw.trim().split(' ')[0];
 
   // DD/MM/YYYY
@@ -40,14 +48,14 @@ function normaliseDateString(raw: string): string {
     return `${y}-${m}-${d}`;
   }
 
-  // Already YYYY-MM-DD or ISO prefix
-  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
-    return trimmed.substring(0, 10);
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
   }
 
   // Fallback
   try {
-    const dt = new Date(trimmed);
+    const dt = new Date(raw);
     if (!isNaN(dt.getTime())) {
       const y = dt.getFullYear();
       const m = String(dt.getMonth() + 1).padStart(2, '0');
@@ -337,6 +345,30 @@ export default function ProgressScreen() {
     fetchData();
   }, [fetchData]);
 
+  const confirmDeleteLog = (log: Log) => {
+    Alert.alert(
+      'Delete Log',
+      'Are you sure you want to delete this log entry?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive', 
+          onPress: async () => {
+            try {
+              const res = await fetch(`/api/logs/${log.id}`, { method: 'DELETE' });
+              if (!res.ok) throw new Error('Failed to delete log');
+              // Update local state by removing the log
+              setAllLogs(prev => prev.filter(l => l.id !== log.id));
+            } catch (err) {
+              Alert.alert('Error', err instanceof Error ? err.message : 'Failed to delete');
+            }
+          } 
+        }
+      ]
+    );
+  };
+
   // ── Derived data for selected exercise ───────────────────────────────────
   const exerciseLogs = selectedExercise
     ? allLogs.filter((l) => l.exercise_id === selectedExercise.id)
@@ -440,6 +472,12 @@ export default function ProgressScreen() {
                   <Text style={styles.logWeight}>{log.weight_kg}</Text>
                   <Text style={styles.logWeightUnit}>kg</Text>
                 </View>
+                <TouchableOpacity 
+                  style={styles.deleteLogBtn} 
+                  onPress={() => confirmDeleteLog(log)}
+                >
+                  <Ionicons name="trash-outline" size={18} color={Colors.secondary} />
+                </TouchableOpacity>
               </View>
             ))
           )}
@@ -736,5 +774,9 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textAlign: 'center',
     lineHeight: 22,
+  },
+  deleteLogBtn: {
+    padding: Spacing.xs,
+    marginLeft: Spacing.sm,
   },
 });

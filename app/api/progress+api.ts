@@ -4,7 +4,7 @@
  *       so the Progress screen only needs one round-trip.
  */
 
-import { getExercises, getLogs } from '@/services/firestore';
+import { getExercises, getLogs } from '@/services/firestore-rest';
 
 export async function GET() {
   try {

@@ -158,7 +158,14 @@ export async function appendExercise(exercise: Exercise): Promise<void> {
     id,
     name_lowercase: exercise.name.toLowerCase(),
   };
-  await setDoc(doc(db, COLLECTIONS.exercises, id), data);
+  console.log(`[Firestore] Attempting to write exercise: ${id}`);
+  try {
+    await setDoc(doc(db, COLLECTIONS.exercises, id), data);
+    console.log(`[Firestore] ✅ Successfully wrote exercise: ${id}`);
+  } catch (error: any) {
+    console.error(`[Firestore] ❌ Failed to write exercise: ${id}`, error.message);
+    throw error;
+  }
 }
 
 // ─── WRITE — Routines ──────────────────────────────────────────────────────

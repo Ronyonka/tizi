@@ -1,5 +1,5 @@
 import { getApps, initializeApp } from 'firebase/app';
-import { initializeFirestore, memoryLocalCache } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -14,12 +14,13 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
 /**
- * For Expo API Routes (Node.js), we use memoryLocalCache to avoid browser-only 
- * persistence issues. For complex server-side logic in production, consider 
- * migrating to `firebase-admin` for privileged and more stable connectivity.
+ * For Expo API Routes (Node.js), we use forceLongPolling to avoid gRPC/WebSocket 
+ * hangs in the server environment. This is more reliable for server-side 
+ * modular Firestore SDK usage in the local dev server.
  */
 export const db = initializeFirestore(app, {
-  localCache: memoryLocalCache(),
+  // localCache: memoryLocalCache(), // Test if cache is causing hangs
+  experimentalForceLongPolling: true,
 });
 
 export default app;

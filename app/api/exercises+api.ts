@@ -7,7 +7,7 @@
 import {
     appendExercise,
     getExercises,
-} from '@/services/firestore';
+} from '@/services/firestore-rest';
 
 export async function GET() {
   try {

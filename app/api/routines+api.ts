@@ -6,8 +6,8 @@
 
 import {
     appendRoutine,
-    getRoutines,
-} from '@/services/firestore';
+    getRoutines
+} from '@/services/firestore-rest';
 
 export async function GET() {
   try {

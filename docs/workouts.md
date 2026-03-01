@@ -80,36 +80,32 @@ Junction table. One row per exercise-in-a-routine, storing the default set/rep p
 ## Architecture & Data Flow
 
 ```
-workouts.tsx  (React Native — client-side)
+workouts.tsx / progress.tsx  (React Native — client)
     │
-    │  onSnapshot (Realtime Read)
+    │  onSnapshot / fetch (Realtime Read)
     ▼
-Firebase Firestore
+Cloud Firestore
     ▲
     │  HTTP mutation (relative URL)
     ▼
 Expo API Routes  (Node.js — server-side)
-    ├── /api/routines             (POST)
-    ├── /api/routines/:id         (PATCH, DELETE)
+    ├── /api/routines             (POST, PATCH, DELETE)
     ├── /api/exercises            (POST)
     ├── /api/routine-exercises    (POST, PATCH, DELETE)
-    └── /api/csv-upload           (POST)
+    ├── /api/csv-upload           (POST)
+    └── /api/logs/[id]            (DELETE)
     │
-    │  Firestore JS SDK
+    │  Firestore REST API (fetch)
     ▼
-services/firestore.ts
+services/firestore-rest.ts
 ```
 
-### On mount
+### Data Flow Pattern
 
-The Workouts screen sets up three separate Firestore listeners (`onSnapshot`) for `routines`, `exercises`, and `routine_exercises`. This ensures the UI stays perfectly in sync with the database at all times.
-
-### On mutation
-
-All add, edit, and delete operations are performed via **API Routes**. 
-1. **API call** — the corresponding route writes to Firestore.
-2. **Realtime Update** — as soon as the write is committed to Firestore, the `onSnapshot` listeners on the client trigger an automatic UI update.
-3. **Error** — an Alert is shown if the API call fails.
+Tizi implements a **hybrid data flow**:
+- **Realtime Reads**: The frontend uses the **Firebase JS SDK** (`onSnapshot`) for live updates on the Home and Workouts screens. 
+- **Reliable Writes**: All database mutations are handled by **API Routes** which call the **Firestore REST API**. This bypasses potential GRPC/Long-polling hangs in the server environment, ensuring that writes are fast and stateless.
+- **Auto-Sync**: When an API route completes a write, the Firestore document changes, which automatically triggers the client-side `onSnapshot` listeners to refresh the UI.
 
 ---
 
@@ -334,13 +330,39 @@ Removes a single exercise from a routine.
 
 ---
 
-### `POST /api/csv-upload`
+### `POST /api/logs`
 
-Bulk-imports data from a CSV. Deduplicates against existing Firestore data before writing.
+Creates or updates multiple workout logs for a session.
 
-See [CSV Bulk Import](#csv-bulk-import) for full details.
+**Body**
+```json
+{ 
+  "logs": [
+    { "date": "...", "exercise_id": "...", "sets": "1", "reps": "10", "weight_kg": 50 },
+    ...
+  ]
+}
+```
+
+**Response** `201`
+```json
+{ "success": true, "count": 5 }
+```
 
 ---
+
+### `DELETE /api/logs/:id`
+
+Deletes a single workout log entry.
+
+**Response** `200`
+```json
+{ "success": true, "id": "log_1234" }
+```
+
+---
+
+### `POST /api/csv-upload`
 
 ## CSV Bulk Import
 
@@ -412,7 +434,7 @@ Leg Day,Wednesday,Leg Press,Quads,3,12
 
 ## Service Layer Reference
 
-The functions below live in `services/firestore.ts` and are called from the API routes.
+The functions below live in `services/firestore-rest.ts` and are called from the API routes. They provide a REST-based alternative to the SDK for reliable server-side writes.
 
 ### Read functions
 
@@ -421,14 +443,7 @@ The functions below live in `services/firestore.ts` and are called from the API 
 | `getExercises()` | `Exercise[]` | All documents from `exercises` collection |
 | `getRoutines()` | `Routine[]` | All documents from `routines` collection |
 | `getRoutineExercises()` | `RoutineExercise[]` | All documents from `routine_exercises` collection |
-
-### Lookup functions
-
-| Function | Returns | Description |
-|---|---|---|
-| `findExerciseByName(name)` | `Exercise \| null` | Case-insensitive lookup using `name_lowercase` |
-| `findRoutineByNameAndDay(name, day)` | `Routine \| null` | Case-insensitive lookup using `_lowercase` fields |
-| `getRoutineExercise(rtId, exId)` | `RE \| null` | Lookup using composite ID: `${rtId}_${exId}` |
+| `getLogs()` | `Log[]` | All documents from `logs` collection |
 
 ### Write functions — Routines
 
@@ -439,26 +454,19 @@ The functions below live in `services/firestore.ts` and are called from the API 
 | `deleteRoutine(id)` | Finds document by id, deletes it |
 | `deleteAllRoutineExercisesForRoutine(routineId)` | Deletes all `routine_exercises` documents for a given routine |
 
-### Write functions — Exercises
+### Write functions — Logs
 
 | Function | Description |
 |---|---|
-| `appendExercise(ex)` | Appends a new document to `exercises` |
-
-### Write functions — Routine_Exercises
-
-| Function | Description |
-|---|---|
-| `appendRoutineExercise(re)` | Appends a new link document |
-| `updateRoutineExercise(routineId, exerciseId, sets, reps)` | Finds link document and updates sets/reps |
-| `deleteRoutineExercise(routineId, exerciseId)` | Finds and deletes the link document |
-
-### Batch / generic helpers
-
-| Function | Description |
-|---|---|
+| `appendLog(log)` | Appends a single workout log |
+| `deleteLog(id)` | Deletes a single workout log |
 | `batchAppendLogs(logs)` | High-level helper for saving session logs (chunks in 500s) |
-| `testConnection()` | Verifies Firestore connectivity |
+
+### Utility helpers
+
+| Function | Description |
+|---|---|
+| `testConnection()` | Verifies Firestore connectivity via REST |
 
 ---
 
@@ -486,7 +494,7 @@ With the appropriate HTTP status code (`400` for validation, `500` for service e
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Screen shows "Failed to load data" on open | Firestore connection issue | Check `curl localhost:8081/api/test-sheets` and verify `.env` values |
-| "Routine not found" on delete | Document was already deleted, or ID mismatch | Refresh the screen |
-| CSV import succeeds but no new documents appear | All rows were deduplicated as already existing | Check existing data in Firestore |
-| Sets/reps not updating | Document lookup failed (routine_id + exercise_id not found) | Refresh to re-sync, then retry |
+| Screen shows "Failed to load data" | Firestore Permission Error | Verify your Security Rules in Firebase Console |
+| Snapshot listener error in logs | Missing Firestore rules | Apply the "Development Rules" in `docs/firebase.md` |
+| "Failed to load" on Home/Workouts | Connection issue | Check `curl localhost:8081/api/test-sheets` |
+| Notifications crashing on Android | Expo Go restriction | Tizi uses defensive guards; check `services/notifications.ts` |

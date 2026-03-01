@@ -8,15 +8,12 @@
  * to the exercises, routines, and routine_exercises Firestore collections.
  */
 
-import { doc } from 'firebase/firestore';
 
-import { COLLECTIONS } from '@/config/firebase';
-import { db } from '@/services/firebase';
 import {
     findExerciseByName,
     findRoutineByNameAndDay,
-    getRoutineExercise
-} from '@/services/firestore';
+    getRoutineExercise,
+} from '@/services/firestore-rest';
 
 interface CsvRow {
   routine_name: string;
@@ -161,33 +158,24 @@ export async function POST(request: Request) {
     }
     console.log(`[CSV] Deduplication complete. Writing ${newExercises.length} ex, ${newRoutines.length} rt, ${newRoutineExercises.length} links.`);
 
-    // Write all new documents to Firestore using a single batch
-    const { writeBatch } = await import('firebase/firestore');
-    const batch = writeBatch(db);
+    // Write all new documents to Firestore using the stable REST service
+    const { 
+      appendExercise, 
+      appendRoutine, 
+      appendRoutineExercise 
+    } = await import('@/services/firestore-rest');
 
-    newExercises.forEach((ex) => {
-      const id = ex.id;
-      const ref = doc(db, COLLECTIONS.exercises, id);
-      batch.set(ref, { ...ex, name_lowercase: ex.name.toLowerCase() });
-    });
+    for (const ex of newExercises) {
+      await appendExercise(ex);
+    }
 
-    newRoutines.forEach((rt) => {
-      const id = rt.id;
-      const ref = doc(db, COLLECTIONS.routines, id);
-      batch.set(ref, { 
-        ...rt, 
-        name_lowercase: rt.name.toLowerCase(), 
-        day_of_week_lowercase: rt.day_of_week.toLowerCase() 
-      });
-    });
+    for (const rt of newRoutines) {
+      await appendRoutine(rt);
+    }
 
-    newRoutineExercises.forEach((re) => {
-      const docId = `${re.routine_id}_${re.exercise_id}`;
-      const ref = doc(db, COLLECTIONS.routineExercises, docId);
-      batch.set(ref, re);
-    });
-
-    await batch.commit();
+    for (const re of newRoutineExercises) {
+      await appendRoutineExercise(re);
+    }
 
     return Response.json({
       success: true,

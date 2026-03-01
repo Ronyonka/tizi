@@ -50,6 +50,12 @@ function toDateKey(date: Date): string {
  */
 function normaliseDateString(raw: string): string {
   if (!raw) return '';
+
+  // If it's an ISO string (2026-03-01T22:13:03.000Z), take the first 10 chars
+  if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) {
+    return raw.substring(0, 10);
+  }
+
   const trimmed = raw.trim().split(' ')[0]; // drop time portion
 
   // DD/MM/YYYY
@@ -58,14 +64,14 @@ function normaliseDateString(raw: string): string {
     return `${y}-${m}-${d}`;
   }
 
-  // Already YYYY-MM-DD or ISO prefix
-  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
-    return trimmed.substring(0, 10);
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
   }
 
   // Fallback
   try {
-    const dt = new Date(trimmed);
+    const dt = new Date(raw);
     if (!isNaN(dt.getTime())) return toDateKey(dt);
   } catch {
     // ignore
@@ -98,16 +104,15 @@ function computeStreaks(
     const isLogged = loggedDates.has(dateKey);
     const isPast = cursor < todayNorm;
 
-    if (!isScheduled) {
-      // Rest day — no effect on streak
-    } else if (isLogged) {
+    if (isLogged) {
       // Completed — streak continues
       current += 1;
-    } else if (isPast) {
+    } else if (isPast && isScheduled) {
       // Scheduled but not logged and in the past — missed, reset
       current = 0;
     }
-    // Today + scheduled + not yet logged: don't touch streak
+    // Rest days (not scheduled) and current-day-not-yet-logged have NO IMPACT.
+    // They don't increment and don't reset.
 
     if (current > longest) longest = current;
     cursor.setDate(cursor.getDate() + 1);

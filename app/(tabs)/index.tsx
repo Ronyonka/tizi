@@ -45,6 +45,7 @@ export default function HomeScreen() {
   const [exercises, setExercises] = useState<ExerciseWithTarget[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingWorkout[]>([]);
   const [logs, setLogs] = useState<Record<string, SetLog[]>>({});
+  const [isCompleted, setIsCompleted] = useState(false);
 
   useEffect(() => {
     // ── Realtime listeners ──────────────────────────────────────────────────
@@ -138,20 +139,27 @@ export default function HomeScreen() {
 
     // Listen to Routines
     const unsubRoutines = onSnapshot(collection(db, COLLECTIONS.routines), (snap) => {
-      allRoutines = snap.docs.map(d => d.data() as Routine);
+      allRoutines = snap.docs.map(d => ({ ...(d.data() as Routine), id: d.id }));
       updateState();
+    }, (err) => {
+      console.error('[Home] Routines listener error:', err);
+      setLoading(false);
     });
 
     // Listen to Routine Exercises
     const unsubRE = onSnapshot(collection(db, COLLECTIONS.routineExercises), (snap) => {
-      allRoutineExercises = snap.docs.map(d => d.data() as RoutineExercise);
+      allRoutineExercises = snap.docs.map(d => ({ ...(d.data() as RoutineExercise), id: d.id }));
       updateState();
+    }, (err) => {
+      console.error('[Home] Routine-exercises listener error:', err);
     });
 
     // Listen to Exercises
-    const unsubEx = onSnapshot(collection(db, COLLECTIONS.exercises), (snap) => {
-      allExercises = snap.docs.map(d => d.data() as Exercise);
+    const unsubExercises = onSnapshot(collection(db, COLLECTIONS.exercises), (snap) => {
+      allExercises = snap.docs.map(d => ({ ...(d.data() as Exercise), id: d.id }));
       updateState();
+    }, (err) => {
+      console.error('[Home] Exercises listener error:', err);
     });
 
     // Listen to Logs for today
@@ -165,12 +173,20 @@ export default function HomeScreen() {
     const unsubLogs = onSnapshot(qLogs, (snap) => {
       todayLogs = snap.docs.map(d => d.data() as Log);
       updateState();
+      
+      // If we have any logs for today, mark as completed but ONLY if 
+      // we haven't manually toggled back to editing mode.
+      if (todayLogs.length > 0) {
+        setIsCompleted(true);
+      }
+    }, (err) => {
+      console.error('[Home] Logs listener error:', err);
     });
 
     return () => {
       unsubRoutines();
       unsubRE();
-      unsubEx();
+      unsubExercises();
       unsubLogs();
     };
   }, []);
@@ -211,7 +227,7 @@ export default function HomeScreen() {
         sets.forEach((set, idx) => {
           if (set.weight || set.reps) {
             workoutLogs.push({
-              date: `${dateStr} ${new Date().toLocaleTimeString()}`,
+              date: new Date().toISOString(),
               routine_id: todayRoutine.id,
               exercise_id: exerciseId,
               sets: String(idx + 1),
@@ -235,6 +251,7 @@ export default function HomeScreen() {
       });
 
       if (res.ok) {
+        setIsCompleted(true);
         Alert.alert('Success', 'Workout logged successfully! Great job 👊');
       } else {
         const errorData = await res.json();
@@ -284,75 +301,90 @@ export default function HomeScreen() {
         ) : (
           <>
             {/* Banner */}
-            <View style={styles.banner}>
-              <Text style={styles.bannerLabel}>TODAY'S WORKOUT</Text>
-              <Text style={styles.bannerTitle}>{todayRoutine.name}</Text>
-              <Text style={styles.bannerSub}>{new Date().toLocaleDateString('en-US', { weekday: 'long' })}</Text>
-            </View>
+            <TouchableOpacity 
+              activeOpacity={0.9} 
+              onPress={() => isCompleted && setIsCompleted(false)}
+            >
+              <View style={[styles.banner, isCompleted && styles.bannerCompleted]}>
+                <Text style={[styles.bannerLabel, isCompleted && styles.bannerLabelCompleted]}>
+                  {isCompleted ? 'WORKOUT DONE' : "TODAY'S WORKOUT"}
+                </Text>
+                <Text style={styles.bannerTitle}>{todayRoutine.name}</Text>
+                <Text style={styles.bannerSub}>
+                  {isCompleted 
+                    ? 'Great job today! Tap to view/edit logs.' 
+                    : new Date().toLocaleDateString('en-US', { weekday: 'long' })}
+                </Text>
+              </View>
+            </TouchableOpacity>
 
-            {/* Exercises */}
-            <Text style={styles.sectionTitle}>EXERCISES</Text>
-            {exercises.map((ex) => (
-              <View key={ex.id} style={styles.exerciseCard}>
-                <View style={styles.exerciseHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.exerciseName}>{ex.name}</Text>
-                    <Text style={styles.exerciseTarget}>Target: {ex.sets} sets × {ex.reps} reps</Text>
-                  </View>
-                  <Text style={styles.exerciseMuscle}>{ex.muscle_group}</Text>
-                </View>
+            {!isCompleted && (
+              <>
+                {/* Exercises */}
+                <Text style={styles.sectionTitle}>EXERCISES</Text>
+                {exercises.map((ex) => (
+                  <View key={ex.id} style={styles.exerciseCard}>
+                    <View style={styles.exerciseHeader}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.exerciseName}>{ex.name}</Text>
+                        <Text style={styles.exerciseTarget}>Target: {ex.sets} sets × {ex.reps} reps</Text>
+                      </View>
+                      <Text style={styles.exerciseMuscle}>{ex.muscle_group}</Text>
+                    </View>
 
-                {/* Sets Header */}
-                <View style={styles.setsHeader}>
-                  <Text style={[styles.setHeaderText, { width: 40 }]}>Set</Text>
-                  <Text style={[styles.setHeaderText, { flex: 1 }]}>Weight (KG)</Text>
-                  <Text style={[styles.setHeaderText, { flex: 1 }]}>Reps</Text>
-                  <View style={{ width: 30 }} />
-                </View>
+                    {/* Sets Header */}
+                    <View style={styles.setsHeader}>
+                      <Text style={[styles.setHeaderText, { width: 40 }]}>Set</Text>
+                      <Text style={[styles.setHeaderText, { flex: 1 }]}>Weight (KG)</Text>
+                      <Text style={[styles.setHeaderText, { flex: 1 }]}>Reps</Text>
+                      <View style={{ width: 30 }} />
+                    </View>
 
-                {/* Logs */}
-                {logs[ex.id]?.map((set, idx) => (
-                  <View key={idx} style={styles.setRow}>
-                    <Text style={styles.setNumber}>{idx + 1}</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="0"
-                      placeholderTextColor={Colors.textMuted}
-                      keyboardType="numeric"
-                      value={set.weight}
-                      onChangeText={(val) => handleLogChange(ex.id, idx, 'weight', val)}
-                    />
-                    <TextInput
-                      style={styles.input}
-                      placeholder="0"
-                      placeholderTextColor={Colors.textMuted}
-                      keyboardType="numeric"
-                      value={set.reps}
-                      onChangeText={(val) => handleLogChange(ex.id, idx, 'reps', val)}
-                    />
-                    <TouchableOpacity onPress={() => removeSet(ex.id, idx)} style={styles.removeSetBtn}>
-                      <Text style={styles.removeSetText}>×</Text>
+                    {/* Logs */}
+                    {logs[ex.id]?.map((set, idx) => (
+                      <View key={idx} style={styles.setRow}>
+                        <Text style={styles.setNumber}>{idx + 1}</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="0"
+                          placeholderTextColor={Colors.textMuted}
+                          keyboardType="numeric"
+                          value={set.weight}
+                          onChangeText={(val) => handleLogChange(ex.id, idx, 'weight', val)}
+                        />
+                        <TextInput
+                          style={styles.input}
+                          placeholder="0"
+                          placeholderTextColor={Colors.textMuted}
+                          keyboardType="numeric"
+                          value={set.reps}
+                          onChangeText={(val) => handleLogChange(ex.id, idx, 'reps', val)}
+                        />
+                        <TouchableOpacity onPress={() => removeSet(ex.id, idx)} style={styles.removeSetBtn}>
+                          <Text style={styles.removeSetText}>×</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+
+                    <TouchableOpacity onPress={() => addSet(ex.id)} style={styles.addSetBtn}>
+                      <Text style={styles.addSetBtnText}>+ Add Set</Text>
                     </TouchableOpacity>
                   </View>
                 ))}
 
-                <TouchableOpacity onPress={() => addSet(ex.id)} style={styles.addSetBtn}>
-                  <Text style={styles.addSetBtnText}>+ Add Set</Text>
+                <TouchableOpacity
+                  style={[styles.completeBtn, saving && styles.disabledBtn]}
+                  onPress={completeWorkout}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <ActivityIndicator color={Colors.background} />
+                  ) : (
+                    <Text style={styles.completeBtnText}>Complete Workout</Text>
+                  )}
                 </TouchableOpacity>
-              </View>
-            ))}
-
-            <TouchableOpacity
-              style={[styles.completeBtn, saving && styles.disabledBtn]}
-              onPress={completeWorkout}
-              disabled={saving}
-            >
-              {saving ? (
-                <ActivityIndicator color={Colors.background} />
-              ) : (
-                <Text style={styles.completeBtnText}>Complete Workout</Text>
-              )}
-            </TouchableOpacity>
+              </>
+            )}
           </>
         )}
 
@@ -416,12 +448,13 @@ const styles = StyleSheet.create({
   },
 
   banner: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radii.lg,
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.primary,
     padding: Spacing.md,
     marginBottom: Spacing.md,
+  },
+  bannerCompleted: {
+    backgroundColor: Colors.surface, // Stay consistent with normal state if possible or use a subtle change
+    borderColor: Colors.primary,
+    borderWidth: 1,
   },
   bannerLabel: {
     fontSize: Typography.xs,
@@ -429,6 +462,9 @@ const styles = StyleSheet.create({
     fontWeight: Typography.bold,
     letterSpacing: Typography.wider,
     marginBottom: Spacing.xs,
+  },
+  bannerLabelCompleted: {
+    color: Colors.primary,
   },
   bannerTitle: {
     fontSize: Typography.xxl,

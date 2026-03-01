@@ -3,7 +3,7 @@
  *
  * Displays routines grouped by day of week.
  * Supports add/edit/delete for routines and exercises.
- * Syncs all data to Google Sheets via Expo API routes.
+ * Syncs all data to Firestore via Expo API routes.
  * Supports CSV bulk-import.
  */
 
@@ -175,13 +175,19 @@ export default function WorkoutsScreen() {
     
     // Listen to Routines
     const unsubRoutines = onSnapshot(collection(db, COLLECTIONS.routines), (snap) => {
-      setRoutines(snap.docs.map(d => d.data() as Routine));
+      setRoutines(snap.docs.map(d => ({ ...(d.data() as Routine), id: d.id })));
+      setLoading(false);
+    }, (err) => {
+      console.error('[Workouts] Routines listener error:', err);
+      setError(`Failed to load routines: ${err.message}`);
       setLoading(false);
     });
 
     // Listen to Exercises
     const unsubExercises = onSnapshot(collection(db, COLLECTIONS.exercises), (snap) => {
-      setExercises(snap.docs.map(d => d.data() as Exercise));
+      setExercises(snap.docs.map(d => ({ ...(d.data() as Exercise), id: d.id })));
+    }, (err) => {
+      console.error('[Workouts] Exercises listener error:', err);
     });
 
     // Listen to Routine Exercises
@@ -189,12 +195,15 @@ export default function WorkoutsScreen() {
       setRoutineExercises(snap.docs.map(d => {
         const data = d.data();
         return {
+          id: d.id, // Spread document ID
           routine_id: String(data.routine_id),
           exercise_id: String(data.exercise_id),
           sets: String(data.sets),
           reps: String(data.reps),
-        } as RoutineExercise;
+        } as (RoutineExercise & { id: string });
       }));
+    }, (err) => {
+      console.error('[Workouts] Routine-exercises listener error:', err);
     });
 
     return () => {

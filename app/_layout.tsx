@@ -21,9 +21,9 @@ export default function RootLayout() {
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
-          console.log('[App] Google Sheets:', data.message);
+          console.log('[App] Firestore:', data.message);
         } else {
-          console.warn('[App] Google Sheets connection issue:', data.message);
+          console.warn('[App] Firestore connection issue:', data.message);
         }
       })
       .catch((err) => {

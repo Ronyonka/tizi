@@ -1,6 +1,6 @@
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
@@ -79,8 +79,6 @@ function ToggleRow({
 export default function SettingsScreen() {
   const [notifications, setNotifications] = useState(true);
   const [reminderTime, setReminderTime] = useState('08:00');
-  const [spreadsheetId, setSpreadsheetId] = useState('');
-  const [isTesting, setIsTesting] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
   useEffect(() => {
@@ -90,10 +88,8 @@ export default function SettingsScreen() {
   const loadSettings = async () => {
     const enabled = await Storage.getNotificationsEnabled();
     const time = await Storage.getReminderTime();
-    const sid = await Storage.getSpreadsheetId();
     setNotifications(enabled);
     setReminderTime(time);
-    setSpreadsheetId(sid || '');
   };
 
   const syncNotifications = async (enabled: boolean, time: string) => {
@@ -111,10 +107,8 @@ export default function SettingsScreen() {
     }
 
     try {
-      // Fetch routines to schedule (using current spreadsheetId if any)
-      const res = await fetch('/api/routines', {
-        headers: spreadsheetId ? { 'x-spreadsheet-id': spreadsheetId } : {},
-      });
+      // Fetch routines to schedule
+      const res = await fetch('/api/routines');
       const routines = await res.json();
       
       if (Array.isArray(routines)) {
@@ -143,30 +137,6 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleSpreadsheetIdChange = (text: string) => {
-    const cleanId = text.trim();
-    setSpreadsheetId(cleanId);
-    Storage.setSpreadsheetId(cleanId || null);
-  };
-
-  const testConnection = async () => {
-    setIsTesting(true);
-    try {
-      const res = await fetch('/api/test-sheets', {
-        headers: spreadsheetId ? { 'x-spreadsheet-id': spreadsheetId } : {},
-      });
-      const data = await res.json();
-      if (data.success) {
-        Alert.alert('Success', 'Connection to Google Sheets successful!');
-      } else {
-        Alert.alert('Failed', data.message || 'Could not connect to Google Sheets.');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'An error occurred while testing connection.');
-    } finally {
-      setIsTesting(false);
-    }
-  };
 
   const pickerDate = new Date();
   const [hStr, mStr] = reminderTime.split(':');
@@ -214,35 +184,6 @@ export default function SettingsScreen() {
           )}
         </SettingsSection>
 
-        <SettingsSection title="GOOGLE SHEETS CONFIG">
-          <View style={styles.inputContainer}>
-            <Text style={styles.inputLabel}>Spreadsheet ID</Text>
-            <TextInput
-              style={styles.input}
-              value={spreadsheetId}
-              onChangeText={handleSpreadsheetIdChange}
-              placeholder="Enter Spreadsheet ID"
-              placeholderTextColor={Colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Text style={styles.inputHint}>
-              Leave empty to use the default system spreadsheet.
-            </Text>
-          </View>
-          
-          <TouchableOpacity 
-            style={styles.testBtn} 
-            onPress={testConnection}
-            disabled={isTesting}
-          >
-            {isTesting ? (
-              <ActivityIndicator color={Colors.background} size="small" />
-            ) : (
-              <Text style={styles.testBtnText}>Test Connection</Text>
-            )}
-          </TouchableOpacity>
-        </SettingsSection>
 
         <SettingsSection title="ABOUT">
           <SettingsRow label="Version" value="1.0.0" showChevron={false} />
