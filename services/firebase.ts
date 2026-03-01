@@ -14,12 +14,10 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
 /**
- * For Expo API Routes (Node.js), we use forceLongPolling to avoid gRPC/WebSocket 
- * hangs in the server environment. This is more reliable for server-side 
- * modular Firestore SDK usage in the local dev server.
+ * We use forceLongPolling to avoid gRPC/WebSocket 
+ * hangs on Android.
  */
 export const db = initializeFirestore(app, {
-  // localCache: memoryLocalCache(), // Test if cache is causing hangs
   experimentalForceLongPolling: true,
 });
 

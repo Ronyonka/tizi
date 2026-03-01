@@ -1,16 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
-import { Log, Routine } from '@/services/firestore';
+import { getLogs, getRoutines } from '@/services/firestore';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -135,13 +135,10 @@ export default function CalendarScreen() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [routinesRes, logsRes] = await Promise.all([
-        fetch('/api/routines'),
-        fetch('/api/logs'),
+      const [routines, rawLogs] = await Promise.all([
+        getRoutines(),
+        getLogs(),
       ]);
-
-      const routines: Routine[] = await routinesRes.json();
-      const rawLogs: Log[] = await logsRes.json();
 
       // Build scheduled-days set (day-of-week names)
       const scheduled = new Set<string>(

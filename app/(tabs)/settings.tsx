@@ -4,6 +4,7 @@ import { Alert, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } f
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
+import { getRoutines, testConnection } from '@/services/firestore';
 import { NotificationService } from '@/services/notifications';
 import { Storage } from '@/services/storage';
 
@@ -108,8 +109,7 @@ export default function SettingsScreen() {
 
     try {
       // Fetch routines to schedule
-      const res = await fetch('/api/routines');
-      const routines = await res.json();
+      const routines = await getRoutines();
       
       if (Array.isArray(routines)) {
         await NotificationService.scheduleWorkoutReminder(time, routines);
@@ -141,6 +141,15 @@ export default function SettingsScreen() {
   const pickerDate = new Date();
   const [hStr, mStr] = reminderTime.split(':');
   pickerDate.setHours(parseInt(hStr, 10), parseInt(mStr, 10));
+
+  const handleTestConnection = async () => {
+    try {
+      await testConnection();
+      Alert.alert('Success', 'Successfully connected to Firestore!');
+    } catch (error) {
+      Alert.alert('Connection Failed', error instanceof Error ? error.message : String(error));
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -183,6 +192,10 @@ export default function SettingsScreen() {
             />
           )}
         </SettingsSection>
+
+        <TouchableOpacity style={styles.testBtn} onPress={handleTestConnection}>
+          <Text style={styles.testBtnText}>Test Connection</Text>
+        </TouchableOpacity>
 
 
         <SettingsSection title="ABOUT">

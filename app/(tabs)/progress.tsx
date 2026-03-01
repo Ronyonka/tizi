@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
-import { Exercise, Log } from '@/services/firestore';
+import { deleteLog, Exercise, getExercises, getLogs, Log } from '@/services/firestore';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -330,10 +330,12 @@ export default function ProgressScreen() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/progress');
-      const data = await res.json();
-      setExercises(data.exercises ?? []);
-      setAllLogs(data.logs ?? []);
+      const [exercises, logs] = await Promise.all([
+        getExercises(),
+        getLogs(),
+      ]);
+      setExercises(exercises ?? []);
+      setAllLogs(logs ?? []);
     } catch (err) {
       console.error('[ProgressScreen] fetch error:', err);
     } finally {
@@ -356,8 +358,7 @@ export default function ProgressScreen() {
           style: 'destructive', 
           onPress: async () => {
             try {
-              const res = await fetch(`/api/logs/${log.id}`, { method: 'DELETE' });
-              if (!res.ok) throw new Error('Failed to delete log');
+              await deleteLog(log.id!);
               // Update local state by removing the log
               setAllLogs(prev => prev.filter(l => l.id !== log.id));
             } catch (err) {

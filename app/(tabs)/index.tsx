@@ -21,7 +21,7 @@ import {
 import { COLLECTIONS } from '@/config/firebase';
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
 import { db } from '@/services/firebase';
-import { Exercise, Log, Routine, RoutineExercise } from '@/services/firestore';
+import { batchAppendLogs, Exercise, Log, Routine, RoutineExercise } from '@/services/firestore';
 
 const USERNAME = 'Ron';
 
@@ -244,19 +244,10 @@ export default function HomeScreen() {
         return;
       }
 
-      const res = await fetch('/api/logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ logs: workoutLogs }),
-      });
+      await batchAppendLogs(workoutLogs);
 
-      if (res.ok) {
-        setIsCompleted(true);
-        Alert.alert('Success', 'Workout logged successfully! Great job 👊');
-      } else {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to save logs');
-      }
+      setIsCompleted(true);
+      Alert.alert('Success', 'Workout logged successfully! Great job 👊');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save workout logs';
       Alert.alert('Error', message);

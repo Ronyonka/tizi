@@ -8,7 +8,6 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { collection, onSnapshot } from 'firebase/firestore';
@@ -34,11 +33,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLLECTIONS } from '@/config/firebase';
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
 import { db } from '@/services/firebase';
-import { Exercise, Routine, RoutineExercise } from '@/services/firestore';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-// Types are now imported from @/services/firestore
+import {
+  appendExercise,
+  appendRoutine,
+  appendRoutineExercise,
+  deleteAllRoutineExercisesForRoutine,
+  deleteRoutine,
+  deleteRoutineExercise,
+  Exercise,
+  findExerciseByName,
+  findRoutineByNameAndDay,
+  Routine,
+  RoutineExercise,
+  updateRoutine,
+  updateRoutineExercise
+} from '@/services/firestore';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -72,43 +81,7 @@ function getMuscleColor(group: string): string {
   return MUSCLE_COLORS[group] ?? Colors.textSecondary;
 }
 
-// ─── API helpers ────────────────────────────────────────────────────────────
-
-/**
- * In React Native, `fetch` has no implicit base URL, so relative paths like
- * `/api/routines` don't work. We derive the dev-server host from expo-constants
- * so the app knows where to send API requests on both simulators and real devices.
- * On web (where window exists) relative paths work fine.
- *
- * SDK 54: the runtime host is in Constants.expoGoConfig.debuggerHost ("ip:port"),
- * not in Constants.expoConfig which only holds static app.json values.
- */
-function getBaseUrl(): string {
-  if (typeof window !== 'undefined') return ''; // web — relative URLs work
-  // expoGoConfig.debuggerHost = "192.168.x.x:19000" in Expo Go
-  const debuggerHost =
-    Constants.expoGoConfig?.debuggerHost ??
-    (Constants.manifest as { debuggerHost?: string } | null)?.debuggerHost;
-  const host = debuggerHost?.split(':')[0] ?? 'localhost';
-  return `http://${host}:8081`;
-}
-
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${getBaseUrl()}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    ...options,
-  });
-
-  const contentType = res.headers.get('content-type') ?? '';
-  if (!contentType.includes('application/json')) {
-    const text = await res.text();
-    throw new Error(`API returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
-  }
-
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? 'API error');
-  return data as T;
-}
+// Removed getBaseUrl and apiFetch
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
@@ -254,25 +227,19 @@ export default function WorkoutsScreen() {
     try {
       if (editingRoutine) {
         // PATCH
-        await apiFetch(`/api/routines/${editingRoutine.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ name: routineName.trim(), day_of_week: routineDay }),
+        await updateRoutine(editingRoutine.id, {
+          name: routineName.trim(),
+          day_of_week: routineDay,
         });
-        setRoutines((prev) =>
-          prev.map((r) =>
-            r.id === editingRoutine.id
-              ? { ...r, name: routineName.trim(), day_of_week: routineDay }
-              : r
-          )
-        );
       } else {
         // POST
-        const newRoutine = await apiFetch<Routine>('/api/routines', {
-          method: 'POST',
-          body: JSON.stringify({ name: routineName.trim(), day_of_week: routineDay }),
-        });
-        setRoutines((prev) => [...prev, newRoutine]);
-        setExpandedRoutines((prev) => new Set([...prev, newRoutine.id]));
+        const newRoutineItem: Routine = {
+          id: `routine_${Date.now()}`,
+          name: routineName.trim(),
+          day_of_week: routineDay,
+        };
+        await appendRoutine(newRoutineItem);
+        setExpandedRoutines((prev) => new Set([...prev, newRoutineItem.id]));
       }
       setShowRoutineModal(false);
     } catch (err) {
@@ -293,11 +260,8 @@ export default function WorkoutsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await apiFetch(`/api/routines/${routine.id}`, { method: 'DELETE' });
-              setRoutines((prev) => prev.filter((r) => r.id !== routine.id));
-              setRoutineExercises((prev) =>
-                prev.filter((re) => re.routine_id !== routine.id)
-              );
+              await deleteRoutine(routine.id);
+              await deleteAllRoutineExercisesForRoutine(routine.id);
             } catch (err) {
               Alert.alert('Error', err instanceof Error ? err.message : 'Failed to delete');
             }
@@ -340,11 +304,13 @@ export default function WorkoutsScreen() {
     }
     setExerciseLoading(true);
     try {
-      const re = await apiFetch<RoutineExercise>('/api/routine-exercises', {
-        method: 'POST',
-        body: JSON.stringify({ routine_id: targetRoutineId, exercise_id: exercise.id, sets: exSets, reps: exReps }),
-      });
-      setRoutineExercises((prev) => [...prev, re]);
+      const newRE: RoutineExercise = {
+        routine_id: targetRoutineId,
+        exercise_id: exercise.id,
+        sets: exSets,
+        reps: exReps,
+      };
+      await appendRoutineExercise(newRE);
       setShowExerciseModal(false);
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'Failed to add exercise');
@@ -362,18 +328,21 @@ export default function WorkoutsScreen() {
     setExerciseLoading(true);
     try {
       // Create exercise first
-      const newEx = await apiFetch<Exercise>('/api/exercises', {
-        method: 'POST',
-        body: JSON.stringify({ name: newExName.trim(), muscle_group: newExMuscle }),
-      });
-      setExercises((prev) => [...prev, newEx]);
+      const newExItem: Exercise = {
+        id: `ex_${Date.now()}`,
+        name: newExName.trim(),
+        muscle_group: newExMuscle,
+      };
+      await appendExercise(newExItem);
 
       // Then link to routine
-      const re = await apiFetch<RoutineExercise>('/api/routine-exercises', {
-        method: 'POST',
-        body: JSON.stringify({ routine_id: targetRoutineId, exercise_id: newEx.id, sets: exSets, reps: exReps }),
-      });
-      setRoutineExercises((prev) => [...prev, re]);
+      const newRE: RoutineExercise = {
+        routine_id: targetRoutineId,
+        exercise_id: newExItem.id,
+        sets: exSets,
+        reps: exReps,
+      };
+      await appendRoutineExercise(newRE);
       setShowExerciseModal(false);
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'Failed to create exercise');
@@ -394,22 +363,7 @@ export default function WorkoutsScreen() {
     if (!editingRE) return;
     setEditSetsLoading(true);
     try {
-      await apiFetch('/api/routine-exercises', {
-        method: 'PATCH',
-        body: JSON.stringify({
-          routine_id: editingRE.routine_id,
-          exercise_id: editingRE.exercise_id,
-          sets: editSets,
-          reps: editReps,
-        }),
-      });
-      setRoutineExercises((prev) =>
-        prev.map((re) =>
-          re.routine_id === editingRE.routine_id && re.exercise_id === editingRE.exercise_id
-            ? { ...re, sets: editSets, reps: editReps }
-            : re
-        )
-      );
+      await updateRoutineExercise(editingRE.routine_id, editingRE.exercise_id, editSets, editReps);
       setShowEditSetsModal(false);
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'Failed to update');
@@ -430,15 +384,7 @@ export default function WorkoutsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await apiFetch('/api/routine-exercises', {
-                method: 'DELETE',
-                body: JSON.stringify({ routine_id: re.routine_id, exercise_id: re.exercise_id }),
-              });
-              setRoutineExercises((prev) =>
-                prev.filter(
-                  (r) => !(r.routine_id === re.routine_id && r.exercise_id === re.exercise_id)
-                )
-              );
+              await deleteRoutineExercise(re.routine_id, re.exercise_id);
             } catch (err) {
               Alert.alert('Error', err instanceof Error ? err.message : 'Failed to remove');
             }
@@ -463,25 +409,94 @@ export default function WorkoutsScreen() {
       if (!file?.uri) return;
 
       setCsvUploading(true);
-      const csv = await FileSystem.readAsStringAsync(file.uri);
+      const csvStr = await FileSystem.readAsStringAsync(file.uri);
 
-      const response = await apiFetch<{
-        success: boolean;
-        summary: {
-          rows_parsed: number;
-          exercises_added: number;
-          routines_added: number;
-          routine_exercises_added: number;
+      // Simple CSV parser
+      const lines = csvStr.split(/\r?\n/).filter(l => l.trim() !== '');
+      if (lines.length < 2) throw new Error('CSV is empty or missing headers');
+      
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      
+      // Parse rows
+      const rows = [];
+      for (let i = 1; i < lines.length; i++) {
+        const rowStr = lines[i];
+        const arr: string[] = [];
+        let quote = false;
+        let cell = '';
+        for (let c of rowStr) {
+          if (c === '"' && quote) quote = false;
+          else if (c === '"' && !quote) quote = true;
+          else if (c === ',' && !quote) { arr.push(cell.trim()); cell = ''; }
+          else cell += c;
+        }
+        arr.push(cell.trim());
+        
+        const obj: Record<string, string> = {};
+        headers.forEach((h, idx) => { obj[h] = arr[idx] || ''; });
+        rows.push(obj);
+      }
+
+      let routinesAdded = 0;
+      let exercisesAdded = 0;
+      let linksAdded = 0;
+
+      const ts = Date.now();
+      const exerciseCache = new Map<string, Exercise | null>();
+      const routineCache = new Map<string, Routine | null>();
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const exName = row['exercise'] || row['exercise name'] || row['name'];
+        const rtName = row['routine'] || row['routine name'];
+        const mGroup = row['muscle group'] || row['muscle_group'] || 'Other';
+        const day = row['day'] || row['day of week'] || row['day_of_week'] || 'Monday';
+        const sets = row['sets'] || '3';
+        const reps = row['reps'] || '10';
+
+        if (!exName || !rtName) continue;
+
+        const exKey = exName.toLowerCase();
+        let exercise = exerciseCache.get(exKey);
+        if (exercise === undefined) {
+          exercise = await findExerciseByName(exName);
+          if (!exercise) {
+            exercise = { id: `ex_${ts}_${i}`, name: exName, muscle_group: mGroup };
+            await appendExercise(exercise);
+            exercisesAdded++;
+          }
+          exerciseCache.set(exKey, exercise);
+        }
+        
+        if (!exercise) continue;
+
+        const rtKey = `${rtName.toLowerCase()}::${day.toLowerCase()}`;
+        let routine = routineCache.get(rtKey);
+        if (routine === undefined) {
+          routine = await findRoutineByNameAndDay(rtName, day);
+          if (!routine) {
+            routine = { id: `rt_${ts}_${i}`, name: rtName, day_of_week: day };
+            await appendRoutine(routine);
+            routinesAdded++;
+          }
+          routineCache.set(rtKey, routine);
+        }
+        
+        if (!routine) continue;
+
+        const newRE: RoutineExercise = {
+          routine_id: routine.id,
+          exercise_id: exercise.id,
+          sets,
+          reps
         };
-      }>('/api/csv-upload', {
-        method: 'POST',
-        body: JSON.stringify({ csv }),
-      });
+        await appendRoutineExercise(newRE);
+        linksAdded++;
+      }
 
-      const s = response.summary;
       Alert.alert(
         '✅ CSV Imported',
-        `Parsed ${s.rows_parsed} rows\n• ${s.routines_added} new routines\n• ${s.exercises_added} new exercises\n• ${s.routine_exercises_added} new exercise links`,
+        `Parsed ${rows.length} rows\n• ${routinesAdded} new routines\n• ${exercisesAdded} new exercises\n• ${linksAdded} new exercise links`,
         [{ text: 'OK', onPress: refresh }]
       );
     } catch (err) {
@@ -611,7 +626,7 @@ export default function WorkoutsScreen() {
           <Text style={styles.dayLabel}>{day.toUpperCase()}</Text>
           <View style={styles.dayLine} />
         </View>
-        {dayRoutines.map(renderRoutineCard)}
+        {dayRoutines.map((r, i) => React.cloneElement(renderRoutineCard(r), { key: `${r.id}_${i}` }))}
       </View>
     );
   }

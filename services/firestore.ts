@@ -259,6 +259,10 @@ export async function batchAppendLogs(
   }
 }
 
+export async function deleteLog(id: string): Promise<void> {
+  await deleteDoc(doc(db, COLLECTIONS.logs, id));
+}
+
 // ─── UTILITY ───────────────────────────────────────────────────────────────
 
 /**
