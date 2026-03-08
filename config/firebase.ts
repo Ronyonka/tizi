@@ -8,6 +8,7 @@ export const COLLECTIONS = {
   routines: 'routines',
   routineExercises: 'routine_exercises',
   logs: 'logs',
+  settings: 'settings',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

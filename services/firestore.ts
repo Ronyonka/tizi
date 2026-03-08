@@ -18,6 +18,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   limit,
   onSnapshot,
@@ -151,6 +152,22 @@ export async function getRoutineExercise(routineId: string, exercise_id: string)
     console.error(`[Firestore] getRoutineExercise error:`, error);
     throw error;
   }
+}
+
+// ─── READ/WRITE — Settings ───────────────────────────────────────────────
+
+export async function getActiveRoutine(): Promise<string | null> {
+  const settingsDoc = await getDoc(doc(db, COLLECTIONS.settings, 'user_preferences'));
+  if (settingsDoc.exists()) {
+    const data = settingsDoc.data();
+    return data.active_routine_name || null;
+  }
+  return null;
+}
+
+export async function setActiveRoutine(name: string | null): Promise<void> {
+  const ref = doc(db, COLLECTIONS.settings, 'user_preferences');
+  await setDoc(ref, { active_routine_name: name }, { merge: true });
 }
 
 // ─── WRITE — Exercises ─────────────────────────────────────────────────────

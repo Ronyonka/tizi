@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
 import { collection, COLLECTIONS, db, Log, onSnapshot, Routine } from '@/services/firestore';
+import { doc } from 'firebase/firestore';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -134,6 +135,10 @@ export default function CalendarScreen() {
   const [loggedDates, setLoggedDates] = useState<Set<string>>(new Set());
   const [streaks, setStreaks] = useState<StreakStats>({ current: 0, longest: 0 });
   const [refreshing, setRefreshing] = useState(false);
+  const [activeRoutineName, setActiveRoutineName] = useState<string | null | undefined>(undefined);
+
+  // Use a ref for activeRoutineName to avoid re-triggering the data listener effect
+  const activeRoutineRef = React.useRef<string | null | undefined>(undefined);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -146,9 +151,14 @@ export default function CalendarScreen() {
     let allLogs: Log[] = [];
 
     const updateState = () => {
-      // Build scheduled-days set (day-of-week names)
+      const currentActiveRoutine = activeRoutineRef.current;
+      if (currentActiveRoutine === undefined) return; // Wait until loaded
+
+      // Build scheduled-days set (day-of-week names) but only for the active routine
       const scheduled = new Set<string>(
-        allRoutines.map((r) => r.day_of_week.trim())
+        allRoutines
+          .filter(r => currentActiveRoutine === null || r.name === currentActiveRoutine)
+          .map((r) => r.day_of_week.trim())
       );
 
       // Build logged-dates set (YYYY-MM-DD)
@@ -207,9 +217,24 @@ export default function CalendarScreen() {
       setLoading(false);
     });
 
+    const unsubPref = onSnapshot(doc(db, COLLECTIONS.settings, 'user_preferences'), (snap: any) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        const newRoutine = data.active_routine_name || null;
+        activeRoutineRef.current = newRoutine;
+        setActiveRoutineName(newRoutine);
+        updateState();
+      } else {
+        activeRoutineRef.current = null;
+        setActiveRoutineName(null);
+        updateState();
+      }
+    });
+
     return () => {
       unsubRoutines();
       unsubLogs();
+      unsubPref();
     };
   }, []);
 

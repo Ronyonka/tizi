@@ -2,20 +2,25 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
 import {
+  COLLECTIONS,
+  Routine,
+  db,
   getExercises,
   getLogs,
   getRoutineExercises,
   getRoutines,
   removeDuplicateRoutines,
+  setActiveRoutine,
   testConnection,
 } from '@/services/firestore';
 import { NotificationService } from '@/services/notifications';
 import { Storage } from '@/services/storage';
+import { doc, onSnapshot } from 'firebase/firestore';
 
 function escapeCSV(value: string | number): string {
   const str = String(value);
@@ -100,6 +105,10 @@ export default function SettingsScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [cleaning, setCleaning] = useState(false);
+  
+  const [activeRoutineName, setActiveRoutineName] = useState<string | null>(null);
+  const [routines, setRoutines] = useState<Routine[]>([]);
+  const [showRoutineModal, setShowRoutineModal] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -110,6 +119,23 @@ export default function SettingsScreen() {
     const time = await Storage.getReminderTime();
     setNotifications(enabled);
     setReminderTime(time);
+
+    // Listen to routines for the modal
+    getRoutines().then(setRoutines);
+
+    // Listen to active routine preference
+    const unsubPref = onSnapshot(doc(db, COLLECTIONS.settings, 'user_preferences'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setActiveRoutineName(data.active_routine_name || null);
+      } else {
+        setActiveRoutineName(null);
+      }
+    });
+
+    return () => {
+      unsubPref();
+    };
   };
 
   const syncNotifications = async (enabled: boolean, time: string) => {
@@ -274,6 +300,13 @@ export default function SettingsScreen() {
     }
   };
 
+  const uniqueRoutineNames = Array.from(new Set(routines.map(r => r.name))).sort();
+
+  const handleSelectRoutine = async (name: string | null) => {
+    await setActiveRoutine(name);
+    setShowRoutineModal(false);
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -293,6 +326,15 @@ export default function SettingsScreen() {
             <Text style={styles.profileEmail}>{PROFILE.email}</Text>
           </View>
         </View>
+
+        <SettingsSection title="TRAINING PREFERENCES">
+          <SettingsRow 
+            label="Active Routine" 
+            value={activeRoutineName || 'None'} 
+            onPress={() => setShowRoutineModal(true)}
+            last 
+          />
+        </SettingsSection>
 
         <SettingsSection title="NOTIFICATIONS">
           <ToggleRow
@@ -357,6 +399,48 @@ export default function SettingsScreen() {
 
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          MODAL: Select Active Routine
+      ═══════════════════════════════════════════════════════════════════ */}
+      <Modal
+        visible={showRoutineModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowRoutineModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowRoutineModal(false)} />
+          <View style={[styles.sheet, styles.sheetTall]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Select Active Routine</Text>
+
+            <ScrollView style={styles.routineList} showsVerticalScrollIndicator={false}>
+              <TouchableOpacity
+                style={[styles.routineOption, activeRoutineName === null && styles.routineOptionActive]}
+                onPress={() => handleSelectRoutine(null)}
+              >
+                <Text style={[styles.routineOptionText, activeRoutineName === null && styles.routineOptionTextActive]}>
+                  None
+                </Text>
+              </TouchableOpacity>
+              
+              {uniqueRoutineNames.map(name => (
+                <TouchableOpacity
+                  key={name}
+                  style={[styles.routineOption, activeRoutineName === name && styles.routineOptionActive]}
+                  onPress={() => handleSelectRoutine(name)}
+                >
+                  <Text style={[styles.routineOptionText, activeRoutineName === name && styles.routineOptionTextActive]}>
+                    {name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -481,5 +565,66 @@ const styles = StyleSheet.create({
     color: Colors.background,
     fontWeight: Typography.bold,
     fontSize: Typography.md,
+  },
+
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  sheet: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: Radii.xl,
+    borderTopRightRadius: Radii.xl,
+    padding: Spacing.lg,
+    paddingBottom: 40,
+    minHeight: 300,
+  },
+  sheetTall: {
+    minHeight: '60%',
+    maxHeight: '90%',
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: Colors.border,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: Spacing.lg,
+  },
+  sheetTitle: {
+    fontSize: Typography.xl,
+    color: Colors.text,
+    fontWeight: Typography.bold,
+    marginBottom: Spacing.xl,
+    textAlign: 'center',
+  },
+  routineList: {
+    flex: 1,
+  },
+  routineOption: {
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: Radii.md,
+    marginBottom: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  routineOptionActive: {
+    backgroundColor: Colors.primary + '11',
+    borderColor: Colors.primary + '33',
+  },
+  routineOptionText: {
+    fontSize: Typography.md,
+    color: Colors.text,
+    fontWeight: Typography.medium,
+  },
+  routineOptionTextActive: {
+    color: Colors.primary,
+    fontWeight: Typography.bold,
   },
 });

@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   collection,
+  doc,
   onSnapshot,
   query,
   where,
@@ -42,6 +44,7 @@ interface UpcomingWorkout {
 export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [activeRoutineName, setActiveRoutineName] = useState<string | null | undefined>(undefined);
   const [todayRoutine, setTodayRoutine] = useState<Routine | null>(null);
   const [exercises, setExercises] = useState<ExerciseWithTarget[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingWorkout[]>([]);
@@ -51,6 +54,9 @@ export default function HomeScreen() {
   const isEditingRef = useRef(false);
   const [todayLogIds, setTodayLogIds] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Use a ref for activeRoutineName to avoid re-triggering the data listener effect
+  const activeRoutineRef = useRef<string | null | undefined>(undefined);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -75,9 +81,16 @@ export default function HomeScreen() {
       const now = new Date();
       const todayDay = daysOfWeek[now.getDay()];
 
+      const currentActiveRoutine = activeRoutineRef.current;
+      if (currentActiveRoutine === undefined) return; // Wait until fetched
+
       // 1. Process Today's Routine
-      const routine = allRoutines.find((r) => r.day_of_week === todayDay);
-      if (routine) {
+      const routine = allRoutines.find((r) => 
+        r.day_of_week === todayDay && 
+        (currentActiveRoutine === null || r.name === currentActiveRoutine)
+      );
+
+      if (routine && currentActiveRoutine !== null) {
         setTodayRoutine(routine);
         const routineExp = allRoutineExercises.filter(re => re.routine_id === routine.id);
         const joined: ExerciseWithTarget[] = routineExp.map((re) => {
@@ -125,10 +138,13 @@ export default function HomeScreen() {
       }
 
       const upcomingData: UpcomingWorkout[] = upcomingDayNames.map((dayName, idx) => {
-        const r = allRoutines.find(routine => routine.day_of_week === dayName);
+        const r = allRoutines.find(routine => 
+          routine.day_of_week === dayName && 
+          (currentActiveRoutine === null || routine.name === currentActiveRoutine)
+        );
         const dayLabel = idx === 0 ? 'Tomorrow' : dayName.slice(0, 3);
         
-        if (!r) {
+        if (!r || currentActiveRoutine === null) {
           return { day: dayLabel, name: 'Rest Day', tags: ['Recovery'] };
         }
 
@@ -149,6 +165,21 @@ export default function HomeScreen() {
       setUpcoming(upcomingData);
       setLoading(false);
     };
+
+    // Listen to active routine preference separately to drive state updates
+    const unsubPref = onSnapshot(doc(db, COLLECTIONS.settings, 'user_preferences'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        const newRoutine = data.active_routine_name || null;
+        activeRoutineRef.current = newRoutine;
+        setActiveRoutineName(newRoutine);
+        updateState(); // Re-run calculations with the new ref value
+      } else {
+        activeRoutineRef.current = null;
+        setActiveRoutineName(null);
+        updateState();
+      }
+    });
 
     // Listen to Routines
     const unsubRoutines = onSnapshot(collection(db, COLLECTIONS.routines), (snap) => {
@@ -218,8 +249,9 @@ export default function HomeScreen() {
       unsubRE();
       unsubExercises();
       unsubLogs();
+      unsubPref();
     };
-  }, []);
+  }, []); // Run ONCE on mount to set up listeners
 
   const handleLogChange = (exerciseId: string, setIndex: number, field: keyof SetLog, value: string) => {
     setLogs((prev) => ({
@@ -321,11 +353,28 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {!todayRoutine ? (
+        {activeRoutineName === null ? (
+          <View style={styles.emptyStateContainer}>
+            <View style={styles.emptyStateIconWrapper}>
+              <Text style={{ fontSize: 48 }}>🤔</Text>
+            </View>
+            <Text style={styles.emptyStateTitle}>No Active Routine</Text>
+            <Text style={styles.emptyStateSubtitle}>
+              You haven't selected an active routine yet. Go to Settings to choose what you're currently following.
+            </Text>
+            <TouchableOpacity 
+              style={styles.settingsNavBtn} 
+              onPress={() => router.push('/(tabs)/settings')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.settingsNavBtnText}>Go to Settings</Text>
+            </TouchableOpacity>
+          </View>
+        ) : !todayRoutine ? (
           <View style={styles.restDayCard}>
             <Text style={styles.restDayTitle}>It's Rest Day! 🧘‍♂️</Text>
             <Text style={styles.restDaySub}>
-              Recovery is where the growth happens. Take it easy today or do some light mobility work.
+              Your "{activeRoutineName}" routine has no workout scheduled for today.{'\n'}Take it easy today or do some light mobility work.
             </Text>
           </View>
         ) : (
@@ -622,6 +671,52 @@ const styles = StyleSheet.create({
     fontSize: Typography.xl,
     fontWeight: Typography.bold,
   },
+  
+  emptyStateContainer: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radii.xl,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  emptyStateIconWrapper: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: Colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.lg,
+  },
+  emptyStateTitle: {
+    fontSize: Typography.xl,
+    fontWeight: Typography.bold,
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+  },
+  emptyStateSubtitle: {
+    fontSize: Typography.md,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: Spacing.xl,
+  },
+  settingsNavBtn: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: 14,
+    borderRadius: Radii.md,
+    width: '100%',
+    alignItems: 'center',
+  },
+  settingsNavBtnText: {
+    color: Colors.background,
+    fontSize: Typography.md,
+    fontWeight: Typography.bold,
+  },
+
   addSetBtn: {
     marginTop: Spacing.xs,
     paddingVertical: Spacing.sm,

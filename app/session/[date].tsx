@@ -7,29 +7,29 @@
  */
 
 import {
-    collection,
-    COLLECTIONS,
-    db,
-    Exercise,
-    Log,
-    onSnapshot,
-    Routine,
-    updateLog
+  collection,
+  COLLECTIONS,
+  db,
+  Exercise,
+  Log,
+  onSnapshot,
+  Routine,
+  updateLog
 } from '@/services/firestore';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -124,7 +124,15 @@ export default function SessionDetailScreen() {
       if (!exercisesLoaded || !routinesLoaded || !logsLoaded) return;
 
       const enriched: EnrichedLog[] = rawLogs.map((log) => {
-        const ex = exerciseMap[log.exercise_id];
+        // Find the exercise that matches this log's exercise_id exactly, 
+        // or matches the legacy composite format (e.g., routine_123_ex_456 ending with _ex_456)
+        let ex: Exercise | undefined = exerciseMap[log.exercise_id];
+        if (!ex && log.exercise_id.includes('_')) {
+          ex = Object.values(exerciseMap).find(e => 
+            log.exercise_id.endsWith('_' + e.id)
+          );
+        }
+
         const rt = routineMap[log.routine_id];
         return {
           ...log,
