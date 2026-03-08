@@ -196,7 +196,7 @@ export default function CalendarScreen() {
           date: String(data.date),
           routine_id: String(data.routine_id),
           exercise_id: String(data.exercise_id),
-          sets: String(data.sets),
+          sets: Number(data.sets),
           reps: String(data.reps),
           weight_kg: Number(data.weight_kg),
         };

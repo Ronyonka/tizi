@@ -93,19 +93,20 @@ export default function HomeScreen() {
           const newLogs: Record<string, SetLog[]> = { ...prev };
           joined.forEach((ex) => {
             const numSets = parseInt(ex.sets) || 3;
-            const exLogs = todayLogs.filter(l => 
+            // New model: at most one log doc per exercise per day
+            const logDoc = todayLogs.find(l => 
               l.exercise_id === ex.id || l.exercise_id.endsWith('_' + ex.id)
             );
             
-            // If we have DB logs for this exercise today, prioritize them
-            if (exLogs.length > 0) {
-              newLogs[ex.id] = exLogs
-                .sort((a, b) => parseInt(a.sets) - parseInt(b.sets))
-                .map(l => ({ weight: String(l.weight_kg), reps: String(l.reps) }));
+            // If we have a DB log for this exercise today, reconstruct set rows from it
+            if (logDoc) {
+              const storedSets = Number(logDoc.sets) || 1;
+              const row = { weight: String(logDoc.weight_kg), reps: String(logDoc.reps) };
+              newLogs[ex.id] = Array(storedSets).fill(null).map(() => ({ ...row }));
             } 
             // Otherwise, if no local input exists yet for this exercise, initialize it
             else if (!newLogs[ex.id] || newLogs[ex.id].length === 0) {
-              newLogs[ex.id] = Array(numSets).fill({ weight: '', reps: '' });
+              newLogs[ex.id] = Array(numSets).fill(null).map(() => ({ weight: '', reps: '' }));
             }
           });
           return newLogs;
@@ -194,7 +195,7 @@ export default function HomeScreen() {
           date: String(data.date),
           routine_id: String(data.routine_id),
           exercise_id: String(data.exercise_id),
-          sets: String(data.sets),
+          sets: Number(data.sets),
           reps: String(data.reps),
           weight_kg: Number(data.weight_kg),
         };
@@ -251,17 +252,18 @@ export default function HomeScreen() {
       const workoutLogs: Omit<Log, 'id'>[] = [];
 
       Object.entries(logs).forEach(([exerciseId, sets]) => {
-        sets.forEach((set, idx) => {
-          if (set.weight || set.reps) {
-            workoutLogs.push({
-              date: new Date().toISOString(),
-              routine_id: todayRoutine.id,
-              exercise_id: exerciseId,
-              sets: String(idx + 1),
-              reps: set.reps || '0',
-              weight_kg: parseFloat(set.weight) || 0,
-            });
-          }
+        // Collect only sets that have been filled in
+        const filledSets = sets.filter(s => s.weight || s.reps);
+        if (filledSets.length === 0) return;
+        // One log document per exercise — store total sets, reps/weight from first set
+        const first = filledSets[0];
+        workoutLogs.push({
+          date: new Date().toISOString(),
+          routine_id: todayRoutine.id,
+          exercise_id: exerciseId,
+          sets: filledSets.length,
+          reps: first.reps || '0',
+          weight_kg: parseFloat(first.weight) || 0,
         });
       });
 

@@ -15,17 +15,17 @@
  */
 
 import {
-    collection,
-    deleteDoc,
-    doc,
-    getDocs,
-    limit,
-    onSnapshot,
-    query,
-    setDoc,
-    updateDoc,
-    where,
-    writeBatch
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  limit,
+  onSnapshot,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  writeBatch
 } from 'firebase/firestore';
 
 import { COLLECTIONS } from '@/config/firebase';
@@ -65,8 +65,8 @@ export interface Log {
   date: string;
   routine_id: string;
   exercise_id: string;
-  sets: string;
-  reps: string;
+  sets: number;   // total sets performed in this session
+  reps: string;   // reps per set (supports ranges like "8-12")
   weight_kg: number;
 }
 
@@ -100,11 +100,11 @@ export async function getLogs(): Promise<Log[]> {
   return snap.docs.map((d) => {
     const data = d.data();
     return {
-      id: String(data.id),
+      id: String(data.id ?? d.id),
       date: String(data.date),
       routine_id: String(data.routine_id),
       exercise_id: String(data.exercise_id),
-      sets: String(data.sets),
+      sets: Number(data.sets),
       reps: String(data.reps),
       weight_kg: Number(data.weight_kg),
     };
@@ -251,12 +251,21 @@ export async function batchAppendLogs(
 ): Promise<void> {
   if (logs.length === 0) return;
 
+  // Use deterministic IDs: date_routineId_exerciseId
+  // This ensures saving the same exercise on the same day upserts (overwrites)
+  // the existing document rather than creating duplicates.
+  const deriveId = (log: Omit<Log, 'id'> & { id?: string }): string => {
+    if (log.id) return log.id;
+    const dateStr = log.date.substring(0, 10); // YYYY-MM-DD
+    return `${dateStr}_${log.routine_id}_${log.exercise_id}`;
+  };
+
   // Firestore batches are capped at 500 writes — chunk if needed
   const CHUNK = 500;
   for (let i = 0; i < logs.length; i += CHUNK) {
     const batch = writeBatch(db);
     logs.slice(i, i + CHUNK).forEach((log) => {
-      const id = log.id ?? `log_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      const id = deriveId(log);
       batch.set(doc(db, COLLECTIONS.logs, id), { ...log, id });
     });
     await batch.commit();

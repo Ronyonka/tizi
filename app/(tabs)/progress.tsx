@@ -365,7 +365,7 @@ export default function ProgressScreen() {
           date: String(data.date),
           routine_id: String(data.routine_id),
           exercise_id: String(data.exercise_id),
-          sets: String(data.sets),
+          sets: Number(data.sets),
           reps: String(data.reps),
           weight_kg: Number(data.weight_kg),
         };
@@ -428,15 +428,17 @@ export default function ProgressScreen() {
 
   const chartPoints = buildChartPoints(filteredLogs);
 
-  // Number of logs per exercise (for the list)
-  // Handle both correct exercise IDs and legacy composite IDs
+  // Number of sessions per exercise = distinct dates that have a log entry.
+  // Using a Set guards against any legacy per-set documents in Firestore.
   const logCountByExercise: Record<string, number> = {};
   exercises.forEach((ex) => {
-    const count = allLogs.filter((l) => 
-      l.exercise_id === ex.id || 
-      l.exercise_id.endsWith('_' + ex.id)
-    ).length;
-    logCountByExercise[ex.id] = count;
+    const dates = new Set(
+      allLogs
+        .filter(l => l.exercise_id === ex.id || l.exercise_id.endsWith('_' + ex.id))
+        .map(l => normaliseDateString(l.date))
+        .filter(Boolean)
+    );
+    logCountByExercise[ex.id] = dates.size;
   });
 
   // ── Loading ───────────────────────────────────────────────────────────────

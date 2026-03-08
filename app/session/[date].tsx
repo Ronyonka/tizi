@@ -150,7 +150,7 @@ export default function SessionDetailScreen() {
               date: String(data.date),
               routine_id: String(data.routine_id),
               exercise_id: String(data.exercise_id),
-              sets: String(data.sets),
+              sets: Number(data.sets),
               reps: String(data.reps),
               weight_kg: Number(data.weight_kg),
             };
@@ -265,16 +265,17 @@ export default function SessionDetailScreen() {
         const newSets = edited.sets.trim();
         const newReps = edited.reps.trim();
         const newWeight = parseFloat(edited.weight_kg);
+        const newSetsNum = parseInt(newSets, 10);
 
         // Only update if something actually changed
         const changed =
-          newSets !== String(log.sets) ||
+          newSetsNum !== log.sets ||
           newReps !== String(log.reps) ||
           newWeight !== log.weight_kg;
 
         if (changed) {
           const fields: Partial<Pick<Log, 'sets' | 'reps' | 'weight_kg'>> = {};
-          if (newSets !== String(log.sets)) fields.sets = newSets;
+          if (!isNaN(newSetsNum) && newSetsNum !== log.sets) fields.sets = newSetsNum;
           if (newReps !== String(log.reps)) fields.reps = newReps;
           if (!isNaN(newWeight) && newWeight !== log.weight_kg) fields.weight_kg = newWeight;
 
