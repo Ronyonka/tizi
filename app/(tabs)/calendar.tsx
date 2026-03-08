@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
-import { getLogs, getRoutines } from '@/services/firestore';
+import { collection, COLLECTIONS, db, Log, onSnapshot, Routine } from '@/services/firestore';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -130,24 +131,27 @@ export default function CalendarScreen() {
   const [scheduledDays, setScheduledDays] = useState<Set<string>>(new Set());
   const [loggedDates, setLoggedDates] = useState<Set<string>>(new Set());
   const [streaks, setStreaks] = useState<StreakStats>({ current: 0, longest: 0 });
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 800);
+  };
 
   // ── Fetch data ──────────────────────────────────────────────────────────
-  const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [routines, rawLogs] = await Promise.all([
-        getRoutines(),
-        getLogs(),
-      ]);
+  useEffect(() => {
+    let allRoutines: Routine[] = [];
+    let allLogs: Log[] = [];
 
+    const updateState = () => {
       // Build scheduled-days set (day-of-week names)
       const scheduled = new Set<string>(
-        routines.map((r) => r.day_of_week.trim())
+        allRoutines.map((r) => r.day_of_week.trim())
       );
 
       // Build logged-dates set (YYYY-MM-DD)
       const logged = new Set<string>(
-        rawLogs.map((l) => normaliseDateString(l.date)).filter(Boolean)
+        allLogs.map((l) => normaliseDateString(l.date)).filter(Boolean)
       );
 
       setScheduledDays(scheduled);
@@ -171,16 +175,41 @@ export default function CalendarScreen() {
 
       const stats = computeStreaks(scheduled, logged, earliest, today);
       setStreaks(stats);
-    } catch (error) {
-      console.error('[CalendarScreen] Error fetching data:', error);
-    } finally {
       setLoading(false);
-    }
-  }, []);
+    };
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    const unsubRoutines = onSnapshot(collection(db, COLLECTIONS.routines), (snap) => {
+      allRoutines = snap.docs.map(d => ({ ...(d.data() as Routine), id: d.id }));
+      updateState();
+    }, (err) => {
+      console.error('[CalendarScreen] Routines listener error:', err);
+      setLoading(false);
+    });
+
+    const unsubLogs = onSnapshot(collection(db, COLLECTIONS.logs), (snap) => {
+      allLogs = snap.docs.map(d => {
+        const data = d.data();
+        return {
+          id: String(data.id ?? d.id),
+          date: String(data.date),
+          routine_id: String(data.routine_id),
+          exercise_id: String(data.exercise_id),
+          sets: String(data.sets),
+          reps: String(data.reps),
+          weight_kg: Number(data.weight_kg),
+        };
+      });
+      updateState();
+    }, (err) => {
+      console.error('[CalendarScreen] Logs listener error:', err);
+      setLoading(false);
+    });
+
+    return () => {
+      unsubRoutines();
+      unsubLogs();
+    };
+  }, []);
 
   // ── Calendar grid builder ────────────────────────────────────────────────
   const buildCalendarDays = (): CalendarDay[] => {
@@ -300,6 +329,9 @@ export default function CalendarScreen() {
         style={styles.container}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
+        }
       >
         {/* Page header */}
         <Text style={styles.pageTitle}>Calendar</Text>

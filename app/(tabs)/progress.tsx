@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
-import { deleteLog, Exercise, getExercises, getLogs, Log } from '@/services/firestore';
+import { collection, COLLECTIONS, db, deleteLog, Exercise, Log, onSnapshot } from '@/services/firestore';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -325,27 +326,64 @@ export default function ProgressScreen() {
   const [allLogs, setAllLogs]              = useState<Log[]>([]);
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
   const [activeRange, setActiveRange]      = useState<TimeRange>('3M');
+  const [refreshing, setRefreshing] = useState(false);
 
-  // ── Fetch all data once on mount ──────────────────────────────────────────
-  const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [exercises, logs] = await Promise.all([
-        getExercises(),
-        getLogs(),
-      ]);
-      setExercises(exercises ?? []);
-      setAllLogs(logs ?? []);
-    } catch (err) {
-      console.error('[ProgressScreen] fetch error:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const onRefresh = () => {
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 800);
+  };
 
+  // ── Fetch all data on mount and listen to changes ──────────────────────────
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    let allExercises: Exercise[] = [];
+    let logs: Log[] = [];
+    let exercisesLoaded = false;
+    let logsLoaded = false;
+
+    const checkLoading = () => {
+      if (exercisesLoaded && logsLoaded) {
+        setLoading(false);
+      }
+    };
+
+    const unsubExercises = onSnapshot(collection(db, COLLECTIONS.exercises), (snap) => {
+      allExercises = snap.docs.map(d => ({ ...(d.data() as Exercise), id: d.id }));
+      setExercises(allExercises);
+      exercisesLoaded = true;
+      checkLoading();
+    }, (err) => {
+      console.error('[ProgressScreen] Exercises listener error:', err);
+      exercisesLoaded = true;
+      checkLoading();
+    });
+
+    const unsubLogs = onSnapshot(collection(db, COLLECTIONS.logs), (snap) => {
+      logs = snap.docs.map(d => {
+        const data = d.data();
+        return {
+          id: String(data.id ?? d.id),
+          date: String(data.date),
+          routine_id: String(data.routine_id),
+          exercise_id: String(data.exercise_id),
+          sets: String(data.sets),
+          reps: String(data.reps),
+          weight_kg: Number(data.weight_kg),
+        };
+      });
+      setAllLogs(logs);
+      logsLoaded = true;
+      checkLoading();
+    }, (err) => {
+      console.error('[ProgressScreen] Logs listener error:', err);
+      logsLoaded = true;
+      checkLoading();
+    });
+
+    return () => {
+      unsubExercises();
+      unsubLogs();
+    };
+  }, []);
 
   const confirmDeleteLog = (log: Log) => {
     Alert.alert(
@@ -371,8 +409,12 @@ export default function ProgressScreen() {
   };
 
   // ── Derived data for selected exercise ───────────────────────────────────
+  // Match both correct exercise IDs (ex_Y) and legacy composite IDs (routine_X_ex_Y)
   const exerciseLogs = selectedExercise
-    ? allLogs.filter((l) => l.exercise_id === selectedExercise.id)
+    ? allLogs.filter((l) => 
+        l.exercise_id === selectedExercise.id || 
+        l.exercise_id.endsWith('_' + selectedExercise.id)
+      )
     : [];
 
   const filteredLogs = filterByRange(exerciseLogs, activeRange);
@@ -387,9 +429,14 @@ export default function ProgressScreen() {
   const chartPoints = buildChartPoints(filteredLogs);
 
   // Number of logs per exercise (for the list)
+  // Handle both correct exercise IDs and legacy composite IDs
   const logCountByExercise: Record<string, number> = {};
-  allLogs.forEach((l) => {
-    logCountByExercise[l.exercise_id] = (logCountByExercise[l.exercise_id] ?? 0) + 1;
+  exercises.forEach((ex) => {
+    const count = allLogs.filter((l) => 
+      l.exercise_id === ex.id || 
+      l.exercise_id.endsWith('_' + ex.id)
+    ).length;
+    logCountByExercise[ex.id] = count;
   });
 
   // ── Loading ───────────────────────────────────────────────────────────────
@@ -409,6 +456,9 @@ export default function ProgressScreen() {
           style={styles.container}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
+          }
         >
           {/* Back button */}
           <TouchableOpacity
@@ -496,6 +546,9 @@ export default function ProgressScreen() {
         style={styles.container}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
+        }
       >
         <Text style={styles.pageTitle}>Progress</Text>
         <Text style={styles.pageSubtitle}>Tap an exercise to view your progress chart</Text>

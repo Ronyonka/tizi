@@ -20,6 +20,7 @@ import {
     doc,
     getDocs,
     limit,
+    onSnapshot,
     query,
     setDoc,
     updateDoc,
@@ -29,6 +30,9 @@ import {
 
 import { COLLECTIONS } from '@/config/firebase';
 import { db } from '@/services/firebase';
+
+// Re-export for use by screen components that need realtime listeners
+export { collection, COLLECTIONS, db, onSnapshot, query, where };
 
 console.log('[Firestore] Initialized with Project ID:', process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
 

@@ -1,27 +1,28 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-    collection,
-    onSnapshot,
-    query,
-    where,
+  collection,
+  onSnapshot,
+  query,
+  where,
 } from 'firebase/firestore';
 
 import { COLLECTIONS } from '@/config/firebase';
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
 import { db } from '@/services/firebase';
-import { batchAppendLogs, Exercise, Log, Routine, RoutineExercise } from '@/services/firestore';
+import { batchAppendLogs, deleteLog, Exercise, Log, Routine, RoutineExercise } from '@/services/firestore';
 
 const USERNAME = 'Ron';
 
@@ -46,6 +47,15 @@ export default function HomeScreen() {
   const [upcoming, setUpcoming] = useState<UpcomingWorkout[]>([]);
   const [logs, setLogs] = useState<Record<string, SetLog[]>>({});
   const [isCompleted, setIsCompleted] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const isEditingRef = useRef(false);
+  const [todayLogIds, setTodayLogIds] = useState<string[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 800);
+  };
 
   useEffect(() => {
     // ── Realtime listeners ──────────────────────────────────────────────────
@@ -72,8 +82,8 @@ export default function HomeScreen() {
         const routineExp = allRoutineExercises.filter(re => re.routine_id === routine.id);
         const joined: ExerciseWithTarget[] = routineExp.map((re) => {
           const ex = allExercises.find((e) => e.id === re.exercise_id);
-          // If exercise is not yet loaded, we skip or show placeholder
-          return ex ? { ...ex, ...re } : null;
+          // Spread re first, then ex, so exercise.id isn't overridden by routine_exercise doc id
+          return ex ? { ...re, ...ex } : null;
         }).filter(Boolean) as ExerciseWithTarget[];
         
         setExercises(joined);
@@ -83,7 +93,9 @@ export default function HomeScreen() {
           const newLogs: Record<string, SetLog[]> = { ...prev };
           joined.forEach((ex) => {
             const numSets = parseInt(ex.sets) || 3;
-            const exLogs = todayLogs.filter(l => l.exercise_id === ex.id);
+            const exLogs = todayLogs.filter(l => 
+              l.exercise_id === ex.id || l.exercise_id.endsWith('_' + ex.id)
+            );
             
             // If we have DB logs for this exercise today, prioritize them
             if (exLogs.length > 0) {
@@ -163,20 +175,37 @@ export default function HomeScreen() {
     });
 
     // Listen to Logs for today
-    const dateStr = new Date().toLocaleDateString();
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+    
     const qLogs = query(
       collection(db, COLLECTIONS.logs),
-      where('date', '>=', dateStr),
-      where('date', '<=', dateStr + ' \uf8ff')
+      where('date', '>=', startOfDay.toISOString()),
+      where('date', '<=', endOfDay.toISOString())
     );
     
     const unsubLogs = onSnapshot(qLogs, (snap) => {
-      todayLogs = snap.docs.map(d => d.data() as Log);
+      todayLogs = snap.docs.map(d => {
+        const data = d.data();
+        return {
+          id: String(data.id ?? d.id),
+          date: String(data.date),
+          routine_id: String(data.routine_id),
+          exercise_id: String(data.exercise_id),
+          sets: String(data.sets),
+          reps: String(data.reps),
+          weight_kg: Number(data.weight_kg),
+        };
+      });
+      // Track log IDs for edit/delete operations
+      setTodayLogIds(todayLogs.map(l => l.id));
       updateState();
       
       // If we have any logs for today, mark as completed but ONLY if 
       // we haven't manually toggled back to editing mode.
-      if (todayLogs.length > 0) {
+      if (todayLogs.length > 0 && !isEditingRef.current) {
         setIsCompleted(true);
       }
     }, (err) => {
@@ -214,14 +243,12 @@ export default function HomeScreen() {
     }));
   };
 
-  const completeWorkout = async () => {
+  const saveWorkout = async () => {
     if (!todayRoutine) return;
 
     try {
       setSaving(true);
       const workoutLogs: Omit<Log, 'id'>[] = [];
-      const timestamp = new Date().toISOString();
-      const dateStr = new Date().toLocaleDateString();
 
       Object.entries(logs).forEach(([exerciseId, sets]) => {
         sets.forEach((set, idx) => {
@@ -239,15 +266,22 @@ export default function HomeScreen() {
       });
 
       if (workoutLogs.length === 0) {
-        Alert.alert('Empty Workout', 'Please log at least one set before completing.');
+        Alert.alert('Empty Workout', 'Please log at least one set before saving.');
         setSaving(false);
         return;
+      }
+
+      // If editing, delete old logs first
+      if (isEditing && todayLogIds.length > 0) {
+        await Promise.all(todayLogIds.map(id => deleteLog(id)));
       }
 
       await batchAppendLogs(workoutLogs);
 
       setIsCompleted(true);
-      Alert.alert('Success', 'Workout logged successfully! Great job 👊');
+      setIsEditing(false);
+      isEditingRef.current = false;
+      Alert.alert('Success', isEditing ? 'Workout updated! 💪' : 'Workout logged successfully! Great job 👊');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save workout logs';
       Alert.alert('Error', message);
@@ -270,6 +304,9 @@ export default function HomeScreen() {
         style={styles.container}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
+        }
       >
         {/* Header */}
         <View style={styles.header}>
@@ -294,16 +331,24 @@ export default function HomeScreen() {
             {/* Banner */}
             <TouchableOpacity 
               activeOpacity={0.9} 
-              onPress={() => isCompleted && setIsCompleted(false)}
+              onPress={() => {
+                if (isCompleted) {
+                  setIsCompleted(false);
+                  setIsEditing(true);
+                  isEditingRef.current = true;
+                }
+              }}
             >
               <View style={[styles.banner, isCompleted && styles.bannerCompleted]}>
                 <Text style={[styles.bannerLabel, isCompleted && styles.bannerLabelCompleted]}>
-                  {isCompleted ? 'WORKOUT DONE' : "TODAY'S WORKOUT"}
+                  {isCompleted ? 'WORKOUT DONE' : isEditing ? 'EDITING WORKOUT' : "TODAY'S WORKOUT"}
                 </Text>
                 <Text style={styles.bannerTitle}>{todayRoutine.name}</Text>
                 <Text style={styles.bannerSub}>
                   {isCompleted 
-                    ? 'Great job today! Tap to view/edit logs.' 
+                    ? 'Great job today! Tap to edit logs.' 
+                    : isEditing
+                    ? 'Modify your sets below and save.'
                     : new Date().toLocaleDateString('en-US', { weekday: 'long' })}
                 </Text>
               </View>
@@ -365,13 +410,15 @@ export default function HomeScreen() {
 
                 <TouchableOpacity
                   style={[styles.completeBtn, saving && styles.disabledBtn]}
-                  onPress={completeWorkout}
+                  onPress={saveWorkout}
                   disabled={saving}
                 >
                   {saving ? (
                     <ActivityIndicator color={Colors.background} />
                   ) : (
-                    <Text style={styles.completeBtnText}>Complete Workout</Text>
+                    <Text style={styles.completeBtnText}>
+                      {isEditing ? 'Update Workout' : 'Complete Workout'}
+                    </Text>
                   )}
                 </TouchableOpacity>
               </>
