@@ -155,7 +155,13 @@ export async function getRoutineExercise(routineId: string, exercise_id: string)
 
 // ─── WRITE — Exercises ─────────────────────────────────────────────────────
 
-export async function appendExercise(exercise: Exercise): Promise<void> {
+export async function appendExercise(exercise: Exercise): Promise<Exercise> {
+  const existing = await findExerciseByName(exercise.name);
+  if (existing) {
+    console.log(`[Firestore] Exercise '${exercise.name}' already exists, returning existing.`);
+    return existing;
+  }
+
   const id = exercise.id || `ex_${Date.now()}`;
   const data = {
     ...exercise,
@@ -166,6 +172,7 @@ export async function appendExercise(exercise: Exercise): Promise<void> {
   try {
     await setDoc(doc(db, COLLECTIONS.exercises, id), data);
     console.log(`[Firestore] ✅ Successfully wrote exercise: ${id}`);
+    return data;
   } catch (error: any) {
     console.error(`[Firestore] ❌ Failed to write exercise: ${id}`, error.message);
     throw error;
@@ -174,7 +181,13 @@ export async function appendExercise(exercise: Exercise): Promise<void> {
 
 // ─── WRITE — Routines ──────────────────────────────────────────────────────
 
-export async function appendRoutine(routine: Routine): Promise<void> {
+export async function appendRoutine(routine: Routine): Promise<Routine> {
+  const existing = await findRoutineByNameAndDay(routine.name, routine.day_of_week);
+  if (existing) {
+    console.log(`[Firestore] Routine '${routine.name}' on '${routine.day_of_week}' already exists, returning existing.`);
+    return existing;
+  }
+
   const id = routine.id || `routine_${Date.now()}`;
   const data = {
     ...routine,
@@ -183,6 +196,7 @@ export async function appendRoutine(routine: Routine): Promise<void> {
     day_of_week_lowercase: routine.day_of_week.toLowerCase(),
   };
   await setDoc(doc(db, COLLECTIONS.routines, id), data);
+  return data;
 }
 
 export async function updateRoutine(
@@ -207,9 +221,47 @@ export async function deleteAllRoutineExercisesForRoutine(routineId: string): Pr
     where('routine_id', '==', routineId)
   );
   const snap = await getDocs(q);
-  const batch = writeBatch(db);
-  snap.docs.forEach((d) => batch.delete(d.ref));
-  await batch.commit();
+  if (snap.empty) return;
+
+  // Use chunks to respect the 500-write limit for batches
+  const CHUNK = 500;
+  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + CHUNK).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+}
+
+/**
+ * Identifies and deletes duplicate routines (same name and day).
+ * Deletes associated routine_exercises when a routine is deleted.
+ * Returns the number of duplicates removed.
+ */
+export async function removeDuplicateRoutines(): Promise<number> {
+  const routines = await getRoutines();
+  const seenKeys = new Set<string>();
+  const duplicateIds: string[] = [];
+
+  for (const routine of routines) {
+    const key = `${routine.name.toLowerCase()}::${routine.day_of_week.toLowerCase()}`;
+    if (seenKeys.has(key)) {
+      duplicateIds.push(routine.id);
+    } else {
+      seenKeys.add(key);
+    }
+  }
+
+  if (duplicateIds.length === 0) return 0;
+
+  console.log(`[Firestore] Found ${duplicateIds.length} duplicate routines. Removing...`);
+
+  // Delete duplicate routines and their associated routine_exercises
+  for (const id of duplicateIds) {
+    await deleteRoutine(id);
+    await deleteAllRoutineExercisesForRoutine(id);
+  }
+
+  return duplicateIds.length;
 }
 
 // ─── WRITE — Routine Exercises ─────────────────────────────────────────────

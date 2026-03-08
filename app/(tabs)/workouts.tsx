@@ -212,8 +212,8 @@ export default function WorkoutsScreen() {
           name: routineName.trim(),
           day_of_week: routineDay,
         };
-        await appendRoutine(newRoutineItem);
-        setExpandedRoutines((prev) => new Set([...prev, newRoutineItem.id]));
+        const savedRoutine = await appendRoutine(newRoutineItem);
+        setExpandedRoutines((prev) => new Set([...prev, savedRoutine.id]));
       }
       setShowRoutineModal(false);
     } catch (err) {
@@ -307,12 +307,12 @@ export default function WorkoutsScreen() {
         name: newExName.trim(),
         muscle_group: newExMuscle,
       };
-      await appendExercise(newExItem);
+      const savedExItem = await appendExercise(newExItem);
 
       // Then link to routine
       const newRE: RoutineExercise = {
         routine_id: targetRoutineId,
-        exercise_id: newExItem.id,
+        exercise_id: savedExItem.id,
         sets: exSets,
         reps: exReps,
       };
@@ -436,7 +436,7 @@ export default function WorkoutsScreen() {
           exercise = await findExerciseByName(exName);
           if (!exercise) {
             exercise = { id: `ex_${ts}_${i}`, name: exName, muscle_group: mGroup };
-            await appendExercise(exercise);
+            exercise = await appendExercise(exercise);
             exercisesAdded++;
           }
           exerciseCache.set(exKey, exercise);
@@ -450,7 +450,7 @@ export default function WorkoutsScreen() {
           routine = await findRoutineByNameAndDay(rtName, day);
           if (!routine) {
             routine = { id: `rt_${ts}_${i}`, name: rtName, day_of_week: day };
-            await appendRoutine(routine);
+            routine = await appendRoutine(routine);
             routinesAdded++;
           }
           routineCache.set(rtKey, routine);

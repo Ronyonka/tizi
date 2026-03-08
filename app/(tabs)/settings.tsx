@@ -11,6 +11,7 @@ import {
   getLogs,
   getRoutineExercises,
   getRoutines,
+  removeDuplicateRoutines,
   testConnection,
 } from '@/services/firestore';
 import { NotificationService } from '@/services/notifications';
@@ -98,6 +99,7 @@ export default function SettingsScreen() {
   const [reminderTime, setReminderTime] = useState('08:00');
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -166,6 +168,32 @@ export default function SettingsScreen() {
     } catch (error) {
       Alert.alert('Connection Failed', error instanceof Error ? error.message : String(error));
     }
+  };
+
+  const handleCleanDuplicates = async () => {
+    Alert.alert(
+      'Clean Duplicates',
+      'This will find and delete duplicate routines and their exercises. Are you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clean',
+          style: 'destructive',
+          onPress: async () => {
+            setCleaning(true);
+            try {
+              const count = await removeDuplicateRoutines();
+              Alert.alert('Success', `Cleaned up ${count} duplicate routine(s).`);
+            } catch (error) {
+              console.error('[Clean Duplicates] Failed:', error);
+              Alert.alert('Error', error instanceof Error ? error.message : String(error));
+            } finally {
+              setCleaning(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleExportData = async () => {
@@ -289,6 +317,19 @@ export default function SettingsScreen() {
         </SettingsSection>
 
         <SettingsSection title="DATA">
+          <TouchableOpacity
+            style={styles.exportBtn}
+            onPress={handleCleanDuplicates}
+            disabled={cleaning}
+            activeOpacity={0.7}
+          >
+            {cleaning ? (
+              <ActivityIndicator color={Colors.background} />
+            ) : (
+              <Text style={styles.exportBtnText}>Clean Duplicates</Text>
+            )}
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.exportBtn}
             onPress={handleExportData}
