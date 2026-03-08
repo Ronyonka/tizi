@@ -1,12 +1,14 @@
+import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -382,13 +384,33 @@ export default function CalendarScreen() {
                 const isToday = day.isToday;
                 const dim = !day.isCurrentMonth;
 
+                const handleDayPress = () => {
+                  if (day.status === 'completed') {
+                    router.push(`/session/${toDateKey(day.date)}`);
+                  } else if (
+                    day.status === 'missed' ||
+                    day.status === 'rest' ||
+                    day.status === 'today-rest'
+                  ) {
+                    Alert.alert('No workout logged for this day');
+                  }
+                  // future / today-scheduled / non-current-month — do nothing
+                };
+
+                const isTappable =
+                  day.isCurrentMonth &&
+                  day.status !== 'future';
+
                 return (
-                  <View
+                  <TouchableOpacity
                     key={di}
                     style={[
                       styles.dayCell,
                       isToday && styles.dayCellToday,
                     ]}
+                    onPress={handleDayPress}
+                    activeOpacity={isTappable ? 0.6 : 1}
+                    disabled={!isTappable}
                   >
                     <Text
                       style={[
@@ -413,7 +435,7 @@ export default function CalendarScreen() {
                     ) : (
                       <View style={styles.statusDotPlaceholder} />
                     )}
-                  </View>
+                  </TouchableOpacity>
                 );
               })}
             </View>
