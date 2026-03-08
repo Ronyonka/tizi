@@ -267,6 +267,14 @@ export async function deleteLog(id: string): Promise<void> {
   await deleteDoc(doc(db, COLLECTIONS.logs, id));
 }
 
+export async function updateLog(
+  id: string,
+  fields: Partial<Pick<Log, 'sets' | 'reps' | 'weight_kg'>>
+): Promise<void> {
+  const ref = doc(db, COLLECTIONS.logs, id);
+  await updateDoc(ref, fields as Record<string, unknown>);
+}
+
 // ─── UTILITY ───────────────────────────────────────────────────────────────
 
 /**

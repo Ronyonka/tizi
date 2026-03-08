@@ -1,12 +1,28 @@
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
-import { getRoutines, testConnection } from '@/services/firestore';
+import {
+  getExercises,
+  getLogs,
+  getRoutineExercises,
+  getRoutines,
+  testConnection,
+} from '@/services/firestore';
 import { NotificationService } from '@/services/notifications';
 import { Storage } from '@/services/storage';
+
+function escapeCSV(value: string | number): string {
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
 
 const PROFILE = {
   name: 'Ron',
@@ -81,6 +97,7 @@ export default function SettingsScreen() {
   const [notifications, setNotifications] = useState(true);
   const [reminderTime, setReminderTime] = useState('08:00');
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -151,6 +168,84 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleExportData = async () => {
+    setExporting(true);
+    try {
+      const [routines, exercises, routineExercises, logs] = await Promise.all([
+        getRoutines(),
+        getExercises(),
+        getRoutineExercises(),
+        getLogs(),
+      ]);
+
+      if (!logs || logs.length === 0) {
+        Alert.alert('No Data', 'No data to export yet.');
+        return;
+      }
+
+      // Build lookup maps
+      const routineMap = new Map(routines.map(r => [r.id, r]));
+      const exerciseMap = new Map(exercises.map(e => [e.id, e]));
+
+      // ── Section 1: Workout Plan ──
+      const planRows = [['routine_name', 'day_of_week', 'exercise_name', 'muscle_group', 'sets', 'reps']];
+      for (const re of routineExercises) {
+        const routine = routineMap.get(re.routine_id);
+        const exercise = exerciseMap.get(re.exercise_id);
+        planRows.push([
+          escapeCSV(routine?.name ?? re.routine_id),
+          escapeCSV(routine?.day_of_week ?? ''),
+          escapeCSV(exercise?.name ?? re.exercise_id),
+          escapeCSV(exercise?.muscle_group ?? ''),
+          escapeCSV(re.sets),
+          escapeCSV(re.reps),
+        ]);
+      }
+
+      // ── Section 2: Workout Logs (newest first) ──
+      const sortedLogs = [...logs].sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return dateB - dateA;
+      });
+      const logRows = [['date', 'routine_name', 'exercise_name', 'sets', 'reps', 'weight_kg']];
+      for (const log of sortedLogs) {
+        const routine = routineMap.get(log.routine_id);
+        const exercise = exerciseMap.get(log.exercise_id);
+        logRows.push([
+          escapeCSV(log.date),
+          escapeCSV(routine?.name ?? log.routine_id),
+          escapeCSV(exercise?.name ?? log.exercise_id),
+          escapeCSV(log.sets),
+          escapeCSV(log.reps),
+          escapeCSV(log.weight_kg),
+        ]);
+      }
+
+      const csv =
+        '--- Workout Plan ---\n' +
+        planRows.map(r => r.join(',')).join('\n') +
+        '\n\n--- Workout Logs ---\n' +
+        logRows.map(r => r.join(',')).join('\n');
+
+      const csvFile = new File(Paths.cache, 'tizi_export.csv');
+      csvFile.create();
+      csvFile.write(csv);
+
+      await Sharing.shareAsync(csvFile.uri, {
+        mimeType: 'text/csv',
+        dialogTitle: 'Export Tizi Data',
+      });
+
+      csvFile.delete();
+    } catch (error) {
+      console.error('[Export] Failed:', error);
+      Alert.alert('Export Failed', error instanceof Error ? error.message : String(error));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -191,6 +286,21 @@ export default function SettingsScreen() {
               onChange={handleTimeChange}
             />
           )}
+        </SettingsSection>
+
+        <SettingsSection title="DATA">
+          <TouchableOpacity
+            style={styles.exportBtn}
+            onPress={handleExportData}
+            disabled={exporting}
+            activeOpacity={0.7}
+          >
+            {exporting ? (
+              <ActivityIndicator color={Colors.background} />
+            ) : (
+              <Text style={styles.exportBtnText}>Export All Data</Text>
+            )}
+          </TouchableOpacity>
         </SettingsSection>
 
         <TouchableOpacity style={styles.testBtn} onPress={handleTestConnection}>
@@ -311,6 +421,22 @@ const styles = StyleSheet.create({
     height: 50,
   },
   testBtnText: {
+    color: Colors.background,
+    fontWeight: Typography.bold,
+    fontSize: Typography.md,
+  },
+
+  exportBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radii.sm,
+    margin: Spacing.md,
+    marginTop: Spacing.xs,
+    padding: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+  },
+  exportBtnText: {
     color: Colors.background,
     fontWeight: Typography.bold,
     fontSize: Typography.md,
